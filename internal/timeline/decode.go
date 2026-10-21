@@ -160,12 +160,18 @@ func contentParts(raw json.RawMessage) []Part {
 		switch kind {
 		case "text", "input_text", "output_text", "":
 			if text, ok := m["text"]; ok {
-				parts = append(parts, Part{Kind: "text", Text: str(text)})
-				continue
+				var value string
+				if json.Unmarshal(text, &value) == nil && string(text) != "null" {
+					parts = append(parts, Part{Kind: "text", Text: value})
+					continue
+				}
 			}
 		case "thinking":
-			parts = append(parts, Part{Kind: "text", Text: str(m["thinking"])})
-			continue
+			var value string
+			if json.Unmarshal(m["thinking"], &value) == nil && string(m["thinking"]) != "null" {
+				parts = append(parts, Part{Kind: "text", Text: value})
+				continue
+			}
 		case "tool_use", "tool_call":
 			parts = append(parts, Part{Kind: "tool_call", Name: str(m["name"]), Data: b})
 			continue

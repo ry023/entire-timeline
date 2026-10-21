@@ -85,7 +85,7 @@ func (g GitStore) ResolveRange(ctx context.Context, spec string) (string, error)
 	return left + ".." + right, nil
 }
 
-var checkpointID = regexp.MustCompile(`^(?:[0-9a-f]{12}|[0-9A-HJKMNP-TV-Z]{26})$`)
+var checkpointID = regexp.MustCompile(`^(?:[0-9a-f]{12}|[0-7][0-9A-HJKMNP-TV-Z]{25})$`)
 
 func (g GitStore) Select(ctx context.Context, spec string) ([]Checkpoint, error) {
 	revs, err := g.ResolveRange(ctx, spec)

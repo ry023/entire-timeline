@@ -92,3 +92,23 @@ func TestLongTextIsNeverTruncated(t *testing.T) {
 		t.Fatal("long message truncated")
 	}
 }
+
+func TestUnexpectedPayloadsAreNotSilentlyDropped(t *testing.T) {
+	for _, raw := range []string{
+		`{"type":"future.message","text":"unknown native payload"}`,
+		`{"v":1,"agent":"copilot-cli","type":"assistant","content":[{"type":"text","text":{"unexpected":"shape"}},{"type":"thinking","thinking":12345}]}`,
+	} {
+		got := restoreFixture(t, []fixtureSession{{id: "x", data: []byte(raw)}})
+		var b bytes.Buffer
+		if err := RenderText(&b, got, TextOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(raw, "unknown native payload") {
+			if !strings.Contains(b.String(), "unknown native payload") {
+				t.Fatal("unknown event payload lost")
+			}
+		} else if !strings.Contains(b.String(), "unexpected") || !strings.Contains(b.String(), "12345") {
+			t.Fatal("malformed content blocks lost")
+		}
+	}
+}

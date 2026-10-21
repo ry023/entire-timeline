@@ -264,3 +264,16 @@ func TestGitNoCheckpointAndReadOnly(t *testing.T) {
 		t.Fatal("repository modified")
 	}
 }
+
+func TestCheckpointIDValidation(t *testing.T) {
+	for _, id := range []string{"aaaaaaaaaaaa", "01KVBJCWYA4YW6J5M9GP655HZ9"} {
+		if !checkpointID.MatchString(id) {
+			t.Fatal("rejected checkpoint ID", id)
+		}
+	}
+	for _, id := range []string{"short", "AAAAAAAAAAAA", "81KVBJCWYA4YW6J5M9GP655HZ9", "01KVBJCWYA4YW6J5M9GP655HZI"} {
+		if checkpointID.MatchString(id) {
+			t.Fatal("accepted invalid checkpoint ID", id)
+		}
+	}
+}

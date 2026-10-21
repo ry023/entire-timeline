@@ -50,7 +50,10 @@ func Restore(ctx context.Context, store Store, spec string) (Timeline, error) {
 			}
 			seen[m.SessionID] = true
 			lines := rawLines(data)
-			if m.Start < 0 || m.LegacyStart < 0 || m.StartLine() > len(lines) {
+			if m.Start < 0 || m.LegacyStart < 0 {
+				return t, fmt.Errorf("checkpoint %s session %s: negative transcript offset (checkpoint_transcript_start=%d, transcript_lines_at_start=%d)", cp.Summary.CheckpointID, m.SessionID, m.Start, m.LegacyStart)
+			}
+			if m.StartLine() > len(lines) {
 				return t, fmt.Errorf("checkpoint %s session %s: raw transcript offset %d is outside [0,%d]", cp.Summary.CheckpointID, m.SessionID, m.StartLine(), len(lines))
 			}
 			if !supportedAgent(m.Agent) {
