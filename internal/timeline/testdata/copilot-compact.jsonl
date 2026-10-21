@@ -1,0 +1,7 @@
+{"v":1,"agent":"copilot-cli","type":"user","ts":"2026-08-21T08:59:00Z","content":[{"type":"text","text":"before range"}]}
+{"v":1,"agent":"copilot-cli","type":"user","ts":"2026-08-21T08:59:13.919Z","content":[{"type":"text","text":"# 認証機能\n\nAuthProviderを利用してください。\n\n```go\nfunc login() {\n    return\n}\n```"},{"text":"第二のcontent block"}]}
+{"v":1,"agent":"copilot-cli","type":"assistant","ts":"2026-08-21T08:59:20Z","id":"assistant-1","content":[{"type":"text","text":"既存の実装を調査します。"},{"type":"tool_use","id":"call-1","name":"Read","input":{"path":"auth.go"},"result":{"output":"SECRET TOOL RESULT\nline 2","status":"success"}},{"type":"text","text":"調査結果をもとに進めます。"}]}
+{"v":1,"agent":"copilot-cli","type":"user","ts":"2026-08-21T08:59:25Z","content":[{"text":"excluded checkpoint"}]}
+{"v":1,"agent":"copilot-cli","type":"assistant","ts":"2026-08-21T08:59:30Z","content":[{"type":"text","text":"excluded response"}]}
+{"v":1,"agent":"copilot-cli","type":"user","ts":"2026-08-21T08:59:49.732Z","content":[{"text":"確認してください"}]}
+{"v":1,"agent":"copilot-cli","type":"assistant","ts":"2026-08-21T09:00:00Z","id":"assistant-2","content":[{"type":"text","text":"実装が完了しました。\n\n- AuthProviderの拡張\n- エラーハンドリングの追加"}]}
