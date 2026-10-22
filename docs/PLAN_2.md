@@ -21,6 +21,8 @@ Entireから復元した会話の各発言に、人間が読み返すための1�
 
 元の会話は引き続きEntireを正とします。要約で本文を置き換えず、既存の全文表示とJSONLの元イベント保持を維持します。
 
+**第2段階MVPの初期対応はGitHub Copilot CLI（`copilot-cli`）に限定します。** 会話データの解析と要約生成providerの両方をCopilot CLIから始め、Claude Code・Codex等への要約対応は今回の対象外とします。既存のClaude Codeの復元・表示機能を削除する変更は行いません。
+
 ## 2. 要約の単位と入力
 
 ### 2.1 合意した対象
@@ -40,9 +42,9 @@ Tool／CoTは表示時に隠すだけでなく、**要約providerへ渡す対象
 
 ### 2.2 現在の実装で変更が必要な点
 
-現在の`internal/timeline/decode.go`は、Copilotの`reasoningText`とClaude Codeの`thinking`を、会話本文と同じ`Part.Kind = "text"`にまとめています。そのため、現状の`parts`からtextだけを選んでもCoTを除外できません。
+現在の`internal/timeline/decode.go`は、Copilotの`reasoningText`を、会話本文と同じ`Part.Kind = "text"`にまとめています。そのため、現状の`parts`からtextだけを選んでもCoTを除外できません。
 
-Agentごとの解析時に会話本文とCoTを区別して保持し、要約用の本文抽出処理を共通化する必要があります。`raw`に残る元の構造も利用できます。元データで会話本文とCoTが区別されていない場合、本文の意味から推測して削除する処理は先行実装しません。
+まずCopilotのネイティブJSONLと、既存MVPで対応したEntire compact v1形式について、会話本文とCoTを区別して保持し、要約用の本文抽出処理を実装します。`raw`に残る元の構造も利用できます。元データで会話本文とCoTが区別されていない場合、本文の意味から推測して削除する処理は先行実装しません。
 
 ### 2.3 既存要約の扱い
 
@@ -59,8 +61,8 @@ Agentごとの解析時に会話本文とCoTを区別して保持し、要約用
 **Entireと同じprovider設定を使って、timeline独自の要約を生成します。** 本家のCheckpoint全体の要約を、そのまま発言要約として利用する方式ではありません。
 
 - `summary_generation.provider`と`summary_generation.model`に従います。
-- Claude／Codex／Copilot等の呼び出し方は、Entire本体の実装を参考にします。
-- provider呼び出しはtimeline側で実装します。
+- 初期対応providerは`copilot-cli`のみです。Copilot CLIの呼び出し方は、Entire本体の実装を参考にします。
+- Copilot CLIの呼び出しはtimeline側で実装します。Claude・Codex等の呼び出しAdapterは今回追加しません。
 - EntireのGoパッケージに依存するとしても、まずは設定パーサー等に限定して検討します。生成処理全体への直接依存は前提にしません。
 - 元会話を記録したAgentと、要約を生成するproviderは独立に扱います。
 
@@ -75,7 +77,7 @@ Agentごとの解析時に会話本文とCoTを区別して保持し、要約用
 
 パーサーの流用と独自の限定的な読み取りのどちらを使うかは、依存関係、Goの要求バージョン、設定規則への追従を確認して決めます。
 
-設定済みproviderが利用不能・未対応の場合の扱い、provider未設定時の選択方法、初期対応providerの範囲は実装前に確定します。無言で別providerへ切り替えることは想定しません。
+本家で`copilot-cli`以外のproviderが設定されている場合は、今回の要約機能では未対応であることを明示してエラーにします。設定を無視してCopilot CLIへ切り替えません。Copilot CLIが利用不能の場合の診断と、provider未設定時の選択方法は実装前に確定します。
 
 ## 4. ファイル構造とレコード
 
@@ -85,11 +87,9 @@ timeline専用メタデータブランチのtree内を、次のように分け�
 
 ```text
 summaries/
-├── copilot-cli/
-│   ├── <session-id-A>.jsonl
-│   └── <session-id-B>.jsonl
-└── claude-code/
-    └── <session-id-C>.jsonl
+└── copilot-cli/
+    ├── <session-id-A>.jsonl
+    └── <session-id-B>.jsonl
 ```
 
 - Agentごとにディレクトリを分けます。
@@ -262,7 +262,7 @@ entire timeline hooks status
 2. **生成対象の範囲**：指定コミット範囲の発言を生成するか、そこに含まれるSession全体の未要約発言を埋めるか。既存の範囲外要約はどちらでも保持します。
 3. **生成時の文脈**：各発言だけを渡すか、前後の会話も文脈として渡すか。要約の単位は発言ごとで固定です。
 4. **Assistantの中間応答**：自然言語の中間メッセージを含める範囲、ストリーミング断片を発言としてまとめる方法。
-5. **provider対応**：初期対応provider、未設定時の挙動、タイムアウト、モデル既定値、パーサーへの依存方法。
+5. **Copilot生成の詳細**：provider未設定時の挙動、タイムアウト、モデル既定値、パーサーへの依存方法。初期対応providerは`copilot-cli`で確定しています。
 6. **レコードの詳細**：発言の照合キー、本文ハッシュの計算規則、再生成指定、プロンプト変更時の既存要約の扱い。
 7. **部分失敗と保存**：生成途中の失敗時にどこまで保存するか、Session内・Session間の実行順序や並行度。
 8. **同期の起動・終了方針**：初回利用時の取得、送信無効化設定と明示syncの関係、失敗時のhookの終了コードと再試行。
@@ -274,12 +274,15 @@ entire timeline hooks status
 
 既存の復元・範囲抽出・全文表示・JSONL出力のテストを維持し、追加機能はFixture、providerのFake、ローカルbareリポジトリを使って検証する計画です。
 
+- CopilotのネイティブJSONLとEntire compact v1形式を初期の要約対象とする。
 - User／Assistantのみを要約し、Toolのみ・CoTのみのイベントを生成対象にしない。
 - 混在イベントから会話本文だけを入力にし、複数content blockと複数行本文を保持する。
 - 元イベント、Tool、CoTは既存の復元結果・JSONLから失われない。
 - 既存の要約A・Bを保持して未要約のCを生成・保存できる。
 - IDのないUser、同じ時刻・本文の別発言を正しく照合できる。
 - 本家設定の上書き規則、provider／model、通常・別リポジトリの同期先を解決できる。
+- 本家でCopilot以外のproviderが設定されている場合に、無言で切り替えず未対応エラーを返す。
+- Copilot以外の会話データを要約しようとした場合に、対象外であることを明示する。
 - 専用設定ファイルや、本家設定へのキー追加・書き換えを行わない。
 - Agent別・Session別の保存と、Session IDの可逆なファイル名変換を検証する。
 - 要約生成後、リモートへ送信せずにローカルGitから要約を読み返せる。
@@ -295,7 +298,7 @@ entire timeline hooks status
 
 1. 未確定事項を整理し、Entireの現行ソースとインストール済みCLIの仕様を再確認する。
 2. 会話本文・Tool・CoTを区別する解析と、要約対象の抽出を実装する。
-3. 本家設定の読み取りと、provider別のCLI呼び出しを実装する。
+3. 本家設定の読み取りと、Copilot CLIによる要約生成の呼び出しを実装する。
 4. 発言ごとの要約生成、Session別レコード、専用ローカルブランチへの保存を実装する。
 5. 既存表示・JSONL出力への要約の反映と、生成用CLIを実装する。
 6. 手動syncを実装し、通常pushと履歴分岐後の復旧を検証する。
