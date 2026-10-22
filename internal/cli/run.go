@@ -10,13 +10,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ry023/entire-timeline/internal/summary"
 	"github.com/ry023/entire-timeline/internal/timeline"
 )
 
 const help = `Usage: entire-timeline <A..B | A...B> [options]
        entire timeline <A..B | A...B> [options]
+       entire timeline summarize <range> [--force] [--batch-bytes N]
 
-Restore Entire conversations from local Git checkpoint data (read-only).
+Restore Entire conversations with saved summaries from local Git (read-only).
 A...B means merge-base(A,B)..B. Options may precede or follow the range.
 
 Options:
@@ -45,6 +47,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 && args[0] == "summarize" {
+		return runSummarize(ctx, args[1:], stdout, stderr)
+	}
 	fs := flag.NewFlagSet("entire-timeline", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	format := fs.String("format", "text", "")
@@ -102,6 +107,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	r, err := summary.Open(ctx, dir)
+	if err != nil {
+		return err
+	}
+	rows, err := r.Load(ctx, t.Events)
+	if err != nil {
+		return err
+	}
+	summary.Attach(&t, rows)
 	for _, warning := range t.Warnings {
 		fmt.Fprintln(stderr, "entire-timeline: warning:", warning)
 	}
