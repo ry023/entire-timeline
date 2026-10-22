@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -250,5 +251,50 @@ func TestProviderErrorsAndMissingConfiguration(t *testing.T) {
 	_, err = Generate(context.Background(), []timeline.Event{{Agent: "claude-code", SessionID: "s", Role: "user", Parts: []timeline.Part{{Kind: "text", Text: "hello"}}}}, nil, nil, Options{})
 	if err == nil {
 		t.Fatal("unsupported source agent accepted")
+	}
+}
+
+func TestConcurrentLocalSavesKeepBothMessages(t *testing.T) {
+	r := newRepo(t)
+	ctx := context.Background()
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(line int) {
+			defer wg.Done()
+			<-start
+			results <- r.Save(ctx, []Record{record(event("same", line, fmt.Sprint(line)), fmt.Sprint(line))})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := r.Load(ctx, []timeline.Event{event("same", 0, "0")})
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("lost concurrent write: %+v %v", rows, err)
+	}
+}
+
+func TestMetadataCheckoutIsNeverMovedUnderAnotherWorktree(t *testing.T) {
+	r := newRepo(t)
+	save(t, r, record(event("s", 0, "A"), "A"))
+	worktree := filepath.Join(t.TempDir(), "inspect-metadata")
+	git(t, r, "worktree", "add", worktree, "entire-timeline/metadata/v1")
+	before := git(t, r, "rev-parse", MetadataRef)
+	if err := r.Save(context.Background(), []Record{record(event("s", 1, "B"), "B")}); err == nil || !strings.Contains(err.Error(), "checked out") {
+		t.Fatal(err)
+	}
+	if _, err := r.Sync(context.Background(), Settings{PushSessions: true}, ""); err == nil || !strings.Contains(err.Error(), "checked out") {
+		t.Fatal(err)
+	}
+	if after := git(t, r, "rev-parse", MetadataRef); after != before {
+		t.Fatal("moved checked-out metadata HEAD")
 	}
 }

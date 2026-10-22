@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ry023/entire-timeline/internal/summary"
 )
@@ -143,5 +144,25 @@ func TestSummarizePartialFailureSaved(t *testing.T) {
 	}
 	if _, err := r.Destination(context.Background(), summary.Settings{}); err == nil {
 		t.Fatal("test unexpectedly has a remote; generation must not require one")
+	}
+}
+
+func TestCancelledGenerationKeepsValidatedRows(t *testing.T) {
+	dir, spec := cliRepo(t)
+	bin := fakeCopilot(t, dir)
+	script := "#!/bin/sh\nprintf '%s\\n' '{\"id\":\"m1\",\"summary\":\"キャンセル前の成功分\"}'\nexec sleep 60\n"
+	if err := os.WriteFile(filepath.Join(bin, "copilot"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	var out, diag bytes.Buffer
+	if Run(ctx, []string{"summarize", spec}, &out, &diag) != 1 || !strings.Contains(diag.String(), "Saved 1 summaries locally") || !strings.Contains(diag.String(), "deadline exceeded") {
+		t.Fatal(diag.String())
+	}
+	out.Reset()
+	diag.Reset()
+	if Run(context.Background(), []string{spec}, &out, &diag) != 0 || !strings.Contains(out.String(), "キャンセル前の成功分") {
+		t.Fatal(out.String(), diag.String())
 	}
 }

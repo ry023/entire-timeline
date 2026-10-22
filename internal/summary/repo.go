@@ -209,6 +209,9 @@ func (r *Repo) Save(ctx context.Context, records []Record) error {
 	if len(records) == 0 {
 		return nil
 	}
+	if err := r.CheckMetadataCheckout(ctx); err != nil {
+		return err
+	}
 	for _, row := range records {
 		if err := row.validate(); err != nil {
 			return err
@@ -259,6 +262,23 @@ func (r *Repo) Save(ctx context.Context, records []Record) error {
 		}
 	}
 	return fmt.Errorf("summary branch kept changing; retry the command")
+}
+
+// CheckMetadataCheckout rejects a metadata branch checked out in any worktree.
+// update-ref itself permits changing checked-out branches. Reject that case
+// explicitly so a manual metadata checkout (including another worktree) cannot
+// have its HEAD moved underneath its index/worktree by a metadata operation.
+func (r *Repo) CheckMetadataCheckout(ctx context.Context) error {
+	b, err := r.git(ctx, nil, nil, "worktree", "list", "--porcelain")
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if line == "branch "+MetadataRef {
+			return fmt.Errorf("summary metadata branch is checked out in a worktree; switch that worktree to another branch before saving or syncing summaries")
+		}
+	}
+	return nil
 }
 
 func (r *Repo) updateRef(ctx context.Context, ref, value, old string) error {

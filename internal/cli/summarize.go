@@ -112,6 +112,9 @@ func runSummarize(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return err
 	}
+	if err := r.CheckMetadataCheckout(ctx); err != nil {
+		return err
+	}
 	s, err := r.LoadSettings(ctx)
 	if err != nil {
 		return err

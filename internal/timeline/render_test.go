@@ -91,6 +91,14 @@ func TestConversationTextExcludesReasoningAndTools(t *testing.T) {
 	}
 }
 
+func TestStreamingFragmentsRemainRawButAreNotSummarySources(t *testing.T) {
+	raw := []byte(`{"type":"assistant.message_delta","data":{"deltaContent":"streaming fragment"}}`)
+	got := restoreFixture(t, []fixtureSession{{id: "s", data: raw}})
+	if got.Events[0].ConversationText() != "" || !bytes.Contains(got.Events[0].Raw, []byte("streaming fragment")) {
+		t.Fatal("fragment summarized or lost")
+	}
+}
+
 func TestClaudeAndUnknownBlocksRemainVisible(t *testing.T) {
 	raw := []byte(`{"type":"assistant","uuid":"claude-event","timestamp":"2026-01-01T00:00:00Z","message":{"content":[{"type":"text","text":"intermediate response"},{"type":"thinking","thinking":"consider the design"},{"type":"image","source":{"data":"image bytes"}},{"type":"tool_use","name":"Edit","input":{"path":"file"}}]}}`)
 	got := restoreFixture(t, []fixtureSession{{id: "claude", agent: "Claude Code", data: raw}})

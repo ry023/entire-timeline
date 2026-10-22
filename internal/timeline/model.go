@@ -78,6 +78,11 @@ type Event struct {
 // ConversationText excludes tools, reasoning and system data from model input.
 // Raw events and the other Parts remain available to renderers and exporters.
 func (e Event) ConversationText() string {
+	// Streaming fragments are not independent utterances. The completed
+	// assistant.message is the summary source; raw fragments remain exportable.
+	if e.Type == "assistant.message_delta" {
+		return ""
+	}
 	if e.Role != "user" && e.Role != "assistant" {
 		return ""
 	}

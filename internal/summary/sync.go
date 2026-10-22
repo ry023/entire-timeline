@@ -18,6 +18,9 @@ func (r *Repo) Sync(ctx context.Context, s Settings, fromHook string) (string, e
 	if !s.PushSessions {
 		return "Summary sync disabled by Entire's push_sessions setting", nil
 	}
+	if err := r.CheckMetadataCheckout(ctx); err != nil {
+		return "", err
+	}
 	d, err := r.Destination(ctx, s)
 	if err != nil {
 		return "", err
