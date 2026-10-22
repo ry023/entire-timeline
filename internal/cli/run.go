@@ -17,6 +17,8 @@ import (
 const help = `Usage: entire-timeline <A..B | A...B> [options]
        entire timeline <A..B | A...B> [options]
        entire timeline summarize <range> [--force] [--batch-bytes N]
+       entire timeline remote sync
+       entire timeline hooks install|uninstall|status
 
 Restore Entire conversations with saved summaries from local Git (read-only).
 A...B means merge-base(A,B)..B. Options may precede or follow the range.
@@ -49,6 +51,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "summarize" {
 		return runSummarize(ctx, args[1:], stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "remote" {
+		return runRemote(ctx, args[1:], stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "hooks" {
+		return runHooks(ctx, args[1:], stdout)
 	}
 	fs := flag.NewFlagSet("entire-timeline", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
