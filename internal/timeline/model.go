@@ -4,6 +4,7 @@ package timeline
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -70,7 +71,23 @@ type Event struct {
 	Checkpoints []string        `json:"checkpoints"`
 	Parts       []Part          `json:"parts,omitempty"`
 	Raw         json.RawMessage `json:"raw"`
+	Summary     string          `json:"summary,omitempty"`
 	sortTime    time.Time
+}
+
+// ConversationText excludes tools, reasoning and system data from model input.
+// Raw events and the other Parts remain available to renderers and exporters.
+func (e Event) ConversationText() string {
+	if e.Role != "user" && e.Role != "assistant" {
+		return ""
+	}
+	var blocks []string
+	for _, part := range e.Parts {
+		if part.Kind == "text" && part.Text != "" {
+			blocks = append(blocks, part.Text)
+		}
+	}
+	return strings.Join(blocks, "\n\n")
 }
 
 type Timeline struct {

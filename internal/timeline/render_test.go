@@ -66,6 +66,31 @@ func TestRenderWriteErrors(t *testing.T) {
 	}
 }
 
+func TestConversationTextExcludesReasoningAndTools(t *testing.T) {
+	for _, raw := range []string{
+		`{"type":"assistant.message","data":{"content":"本文","reasoningText":"秘密の思考","toolRequests":[{"name":"bash","arguments":{"command":"秘密のツール"}}]}}`,
+		`{"v":1,"agent":"copilot-cli","type":"assistant","content":[{"type":"text","text":"本文"},{"type":"thinking","thinking":"秘密の思考"},{"type":"tool_use","name":"bash","input":{"command":"秘密のツール"}}]}`,
+	} {
+		got := restoreFixture(t, []fixtureSession{{id: "s", data: []byte(raw)}})
+		if text := got.Events[0].ConversationText(); text != "本文" {
+			t.Fatalf("unexpected conversation text: %q", text)
+		}
+		got.Events[0].Summary = "保存した要約"
+		var text, exported bytes.Buffer
+		if err := RenderText(&text, got, TextOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := RenderJSONL(&exported, got); err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"本文", "秘密の思考", "保存した要約"} {
+			if !strings.Contains(text.String(), want) || !strings.Contains(exported.String(), want) {
+				t.Fatalf("lost %q", want)
+			}
+		}
+	}
+}
+
 func TestClaudeAndUnknownBlocksRemainVisible(t *testing.T) {
 	raw := []byte(`{"type":"assistant","uuid":"claude-event","timestamp":"2026-01-01T00:00:00Z","message":{"content":[{"type":"text","text":"intermediate response"},{"type":"thinking","thinking":"consider the design"},{"type":"image","source":{"data":"image bytes"}},{"type":"tool_use","name":"Edit","input":{"path":"file"}}]}}`)
 	got := restoreFixture(t, []fixtureSession{{id: "claude", agent: "Claude Code", data: raw}})

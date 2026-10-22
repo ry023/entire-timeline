@@ -54,11 +54,17 @@ func RenderText(w io.Writer, t Timeline, opts TextOptions) error {
 			ts = e.Timestamp.Format("2006-01-02T15:04:05.999999999Z07:00")
 		}
 		fmt.Fprintf(&b, "\n%s\n\n[%s] [%s] %s (%s)\n\n", separator, ts, labels[e.SessionID], strings.ToUpper(e.Role), e.Agent)
+		if e.Summary != "" {
+			fmt.Fprintf(&b, "Summary: %s\n\n", e.Summary)
+		}
 		for _, p := range e.Parts {
 			switch p.Kind {
 			case "text":
 				// No wrapping or truncation: terminal soft-wrap preserves Markdown,
 				// indentation, code fences, and the entire original message.
+				fmt.Fprintln(&b, p.Text)
+			case "reasoning":
+				fmt.Fprintln(&b, "[Reasoning]")
 				fmt.Fprintln(&b, p.Text)
 			case "tool_call":
 				if opts.IncludeTools {

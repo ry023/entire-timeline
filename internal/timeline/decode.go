@@ -95,7 +95,7 @@ func decodeCopilot(e *Event, m map[string]json.RawMessage) {
 			e.Parts = contentParts(d["deltaContent"])
 		}
 		if text := str(d["reasoningText"]); text != "" {
-			e.Parts = append(e.Parts, Part{Kind: "text", Text: text})
+			e.Parts = append(e.Parts, Part{Kind: "reasoning", Text: text})
 		}
 		var requests []json.RawMessage
 		if json.Unmarshal(d["toolRequests"], &requests) == nil {
@@ -169,7 +169,7 @@ func contentParts(raw json.RawMessage) []Part {
 		case "thinking":
 			var value string
 			if json.Unmarshal(m["thinking"], &value) == nil && string(m["thinking"]) != "null" {
-				parts = append(parts, Part{Kind: "text", Text: value})
+				parts = append(parts, Part{Kind: "reasoning", Text: value})
 				continue
 			}
 		case "tool_use", "tool_call":
