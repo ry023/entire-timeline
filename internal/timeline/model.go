@@ -43,8 +43,39 @@ func (m Metadata) StartLine() int {
 type Checkpoint struct {
 	Summary Summary
 	// Source is an immutable git commit, Prefix is the checkpoint's tree path.
-	Source string
-	Prefix string
+	Source      string
+	Prefix      string
+	Commits     []CommitReference
+	Unavailable *MissingCheckpointError
+}
+
+type CommitReference struct {
+	SHA       string    `json:"sha"`
+	Timestamp time.Time `json:"timestamp"` // Git committer time, not conversation time
+}
+
+// MissingCheckpointError describes unavailable local data, not a confirmed
+// absence on any remote. It is carried in the stream so restoration can finish.
+type MissingCheckpointError struct {
+	Code                 string            `json:"code"`
+	CheckpointID         string            `json:"checkpoint_id"`
+	Message              string            `json:"message"`
+	Commits              []CommitReference `json:"commits"`
+	PreviousCheckpointID string            `json:"previous_checkpoint_id,omitempty"`
+	NextCheckpointID     string            `json:"next_checkpoint_id,omitempty"`
+	Placement            string            `json:"placement"`
+}
+
+func (e *MissingCheckpointError) Error() string {
+	return "checkpoint " + e.CheckpointID + ": " + e.Message
+}
+
+type Attribution struct {
+	Status                     string   `json:"status"`
+	SourceCheckpointID         string   `json:"source_checkpoint_id"`
+	PreviousCheckpointID       string   `json:"previous_checkpoint_id"`
+	NextCheckpointID           string   `json:"next_checkpoint_id"`
+	NearbyMissingCheckpointIDs []string `json:"nearby_missing_checkpoint_ids"`
 }
 
 type Store interface {
@@ -67,11 +98,13 @@ type Event struct {
 	Role      string     `json:"role"`
 	ID        string     `json:"event_id,omitempty"`
 	// Line is zero-based in full.jsonl, including blank lines.
-	Line        int             `json:"source_line"`
-	Checkpoints []string        `json:"checkpoints"`
-	Parts       []Part          `json:"parts,omitempty"`
-	Raw         json.RawMessage `json:"raw"`
-	Summary     string          `json:"summary,omitempty"`
+	Line        int                     `json:"source_line"`
+	Checkpoints []string                `json:"checkpoints"`
+	Parts       []Part                  `json:"parts,omitempty"`
+	Raw         json.RawMessage         `json:"raw"`
+	Summary     string                  `json:"summary,omitempty"`
+	Error       *MissingCheckpointError `json:"error,omitempty"`
+	Attribution *Attribution            `json:"attribution,omitempty"`
 	sortTime    time.Time
 }
 
@@ -96,9 +129,11 @@ func (e Event) ConversationText() string {
 }
 
 type Timeline struct {
-	Range       string
-	Checkpoints int
-	Sessions    []string
-	Events      []Event
-	Warnings    []string
+	Range              string
+	Checkpoints        int
+	Sessions           []string
+	Events             []Event
+	Warnings           []string
+	MissingCheckpoints int
+	UnattributedEvents int
 }

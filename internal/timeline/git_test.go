@@ -219,6 +219,12 @@ func TestGitMissingCorruptAndChunkedTranscripts(t *testing.T) {
 			}
 			r.store("refs/heads/entire/checkpoints/v1", files)
 			got, err := Restore(context.Background(), g, base+"..HEAD")
+			if mode == "missing checkpoint" {
+				if err != nil || got.MissingCheckpoints != 1 || len(got.Events) != 1 || got.Events[0].Error == nil || got.Events[0].Error.CheckpointID != id {
+					t.Fatalf("%+v %v", got, err)
+				}
+				return
+			}
 			valid := mode == "chunked" || mode == "compact offset differs" || mode == "legacy offset"
 			if valid {
 				if err != nil || len(got.Events) != 5 {

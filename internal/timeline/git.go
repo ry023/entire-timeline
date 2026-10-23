@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // GitStore deliberately uses Git rather than Entire's export envelope: the
@@ -93,21 +94,40 @@ func (g GitStore) Select(ctx context.Context, spec string) ([]Checkpoint, error)
 		return nil, err
 	}
 	// Ask Git itself to parse the trailer block. Arbitrary message text is not a link.
-	b, err := g.git(ctx, "log", "--reverse", "--topo-order", "--format=%H%x00%(trailers:key=Entire-Checkpoint,valueonly,separator=%x2c)%x00", revs, "--")
+	b, err := g.git(ctx, "log", "--reverse", "--topo-order", "--format=%H%x00%cI%x00%(trailers:key=Entire-Checkpoint,valueonly,separator=%x2c)%x00", revs, "--")
 	if err != nil {
 		return nil, err
 	}
 	commits := map[string]int{}
 	selected := map[string]int{}
+	commitRefs := map[string]CommitReference{}
+	checkpointCommits := map[string][]CommitReference{}
+	selectCommit := func(id, sha string) {
+		order := commits[sha]
+		if old, ok := selected[id]; !ok || order > old {
+			selected[id] = order
+		}
+		for _, ref := range checkpointCommits[id] {
+			if ref.SHA == sha {
+				return
+			}
+		}
+		checkpointCommits[id] = append(checkpointCommits[id], commitRefs[sha])
+	}
 	fields := strings.Split(string(b), "\x00")
-	for i := 0; i+1 < len(fields); i += 2 {
+	for i := 0; i+2 < len(fields); i += 3 {
 		sha := strings.TrimSpace(fields[i])
 		if sha == "" {
 			continue
 		}
 		order := len(commits)
 		commits[sha] = order
-		for _, id := range strings.Split(strings.TrimSpace(fields[i+1]), ",") {
+		stamp, err := time.Parse(time.RFC3339, strings.TrimSpace(fields[i+1]))
+		if err != nil {
+			return nil, fmt.Errorf("commit %s has invalid committer timestamp: %w", sha, err)
+		}
+		commitRefs[sha] = CommitReference{SHA: sha, Timestamp: stamp}
+		for _, id := range strings.Split(strings.TrimSpace(fields[i+2]), ",") {
 			id = strings.TrimSpace(id)
 			if id == "" {
 				continue
@@ -115,7 +135,7 @@ func (g GitStore) Select(ctx context.Context, spec string) ([]Checkpoint, error)
 			if !checkpointID.MatchString(id) {
 				return nil, fmt.Errorf("commit %s has invalid Entire-Checkpoint %q", sha, id)
 			}
-			selected[id] = order
+			selectCommit(id, sha)
 		}
 	}
 	if len(commits) == 0 {
@@ -144,16 +164,12 @@ func (g GitStore) Select(ctx context.Context, spec string) ([]Checkpoint, error)
 			continue
 		}
 		byID[id] = cp
-		if n, ok := commits[cp.Summary.CommitSHA]; ok {
-			if prev, found := selected[id]; !found || n > prev {
-				selected[id] = n
-			}
+		if _, ok := commits[cp.Summary.CommitSHA]; ok {
+			selectCommit(id, cp.Summary.CommitSHA)
 		}
 		for _, link := range cp.Summary.LinkedCommits {
-			if n, ok := commits[link.SHA]; ok {
-				if prev, found := selected[id]; !found || n > prev {
-					selected[id] = n
-				}
+			if _, ok := commits[link.SHA]; ok {
+				selectCommit(id, link.SHA)
 			}
 		}
 	}
@@ -161,7 +177,17 @@ func (g GitStore) Select(ctx context.Context, spec string) ([]Checkpoint, error)
 	for id := range selected {
 		cp, ok := byID[id]
 		if !ok {
-			return nil, fmt.Errorf("checkpoint %s is unavailable locally; fetch the Entire checkpoint refs/metadata branch first", id)
+			cp = Checkpoint{Summary: Summary{CheckpointID: id}, Unavailable: &MissingCheckpointError{
+				Code: "checkpoint_unavailable", CheckpointID: id,
+				Message: "Referenced by commit, but checkpoint data is unavailable locally; remote availability has not been checked.",
+			}}
+		}
+		sort.Slice(checkpointCommits[id], func(i, j int) bool {
+			return commits[checkpointCommits[id][i].SHA] < commits[checkpointCommits[id][j].SHA]
+		})
+		cp.Commits = checkpointCommits[id]
+		if cp.Unavailable != nil {
+			cp.Unavailable.Commits = cp.Commits
 		}
 		out = append(out, cp)
 	}
@@ -242,7 +268,7 @@ func (g GitStore) catalog(ctx context.Context) ([]Checkpoint, error) {
 		if summary.CheckpointID != src.id {
 			return nil, fmt.Errorf("checkpoint ID mismatch: path %s, metadata %s", src.id, summary.CheckpointID)
 		}
-		out = append(out, Checkpoint{summary, src.hash, src.prefix})
+		out = append(out, Checkpoint{Summary: summary, Source: src.hash, Prefix: src.prefix})
 	}
 	return out, nil
 }

@@ -31,7 +31,8 @@ func rawLines(data []byte) [][]byte {
 type RestoreOptions struct {
 	// Diagnostics receives metadata and redacted structural differences only.
 	// A nil writer disables diagnostics without changing restore validation.
-	Diagnostics io.Writer
+	Diagnostics         io.Writer
+	IncludeUnattributed bool
 }
 
 func Restore(ctx context.Context, store Store, spec string) (Timeline, error) {
@@ -50,6 +51,11 @@ func RestoreWithOptions(ctx context.Context, store Store, spec string, opt Resto
 	diag.printf("selected_checkpoints=%d", len(cps))
 	groups := map[string][]snapshot{}
 	for _, cp := range cps {
+		if cp.Unavailable != nil {
+			t.MissingCheckpoints++
+			diag.printf("checkpoint_unavailable checkpoint=%q referencing_commits=%d", cp.Summary.CheckpointID, len(cp.Commits))
+			continue
+		}
 		if len(cp.Summary.Sessions) == 0 {
 			return t, fmt.Errorf("checkpoint %s has no session metadata", cp.Summary.CheckpointID)
 		}
@@ -76,6 +82,9 @@ func RestoreWithOptions(ctx context.Context, store Store, spec string, opt Resto
 			}
 			groups[m.SessionID] = append(groups[m.SessionID], snapshot{m, cp.Summary.CheckpointID, lines})
 		}
+	}
+	if t.MissingCheckpoints > 0 {
+		t.Warnings = append(t.Warnings, fmt.Sprintf("%d checkpoint(s) unavailable locally; timeline is incomplete and contains explicit gap events (remote availability not checked)", t.MissingCheckpoints))
 	}
 	for id := range groups {
 		t.Sessions = append(t.Sessions, id)
@@ -107,9 +116,13 @@ func RestoreWithOptions(ctx context.Context, store Store, spec string, opt Resto
 				}
 			}
 		}
+		var contextLines map[int]*Attribution
+		if opt.IncludeUnattributed {
+			contextLines = unattributedLines(snaps, cps, coverage)
+		}
 		var events []Event
 		for i, line := range last.lines {
-			if len(coverage[i]) == 0 || len(bytes.TrimSpace(line)) == 0 {
+			if (len(coverage[i]) == 0 && contextLines[i] == nil) || len(bytes.TrimSpace(line)) == 0 {
 				continue
 			}
 			e, err := decode(last.metadata.Agent, line)
@@ -120,6 +133,11 @@ func RestoreWithOptions(ctx context.Context, store Store, spec string, opt Resto
 			e.Line = i
 			sort.Strings(coverage[i])
 			e.Checkpoints = coverage[i]
+			if attr := contextLines[i]; attr != nil {
+				e.Attribution = attr
+				e.Checkpoints = []string{}
+				t.UnattributedEvents++
+			}
 			events = append(events, e)
 		}
 		// Missing timestamps inherit the preceding time, or the next known time
@@ -164,6 +182,10 @@ func RestoreWithOptions(ctx context.Context, store Store, spec string, opt Resto
 		}
 		return a.Line < b.Line
 	})
+	insertCheckpointGaps(&t, cps)
 	diag.printf("restored checkpoints=%d sessions=%d events=%d", t.Checkpoints, len(t.Sessions), len(t.Events))
+	if t.MissingCheckpoints > 0 || t.UnattributedEvents > 0 {
+		diag.printf("incomplete_timeline missing_checkpoints=%d unattributed_events=%d", t.MissingCheckpoints, t.UnattributedEvents)
+	}
 	return t, nil
 }
