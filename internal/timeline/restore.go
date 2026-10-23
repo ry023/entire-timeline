@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"sort"
 	"time"
 )
@@ -27,13 +28,26 @@ func rawLines(data []byte) [][]byte {
 	return lines
 }
 
+type RestoreOptions struct {
+	// Diagnostics receives metadata and redacted structural differences only.
+	// A nil writer disables diagnostics without changing restore validation.
+	Diagnostics io.Writer
+}
+
 func Restore(ctx context.Context, store Store, spec string) (Timeline, error) {
+	return RestoreWithOptions(ctx, store, spec, RestoreOptions{})
+}
+
+func RestoreWithOptions(ctx context.Context, store Store, spec string, opt RestoreOptions) (Timeline, error) {
+	diag := diagnostics{opt.Diagnostics}
+	diag.printf("selecting checkpoints from the local Git range")
 	t := Timeline{Range: spec}
 	cps, err := store.Select(ctx, spec)
 	if err != nil {
 		return t, err
 	}
 	t.Checkpoints = len(cps)
+	diag.printf("selected_checkpoints=%d", len(cps))
 	groups := map[string][]snapshot{}
 	for _, cp := range cps {
 		if len(cp.Summary.Sessions) == 0 {
@@ -50,6 +64,7 @@ func Restore(ctx context.Context, store Store, spec string) (Timeline, error) {
 			}
 			seen[m.SessionID] = true
 			lines := rawLines(data)
+			diag.printf("snapshot session=%q checkpoint=%q agent=%q raw_lines=%d selected_raw_range=[%d,%d) checkpoint_transcript_start=%d transcript_lines_at_start=%d", m.SessionID, cp.Summary.CheckpointID, canonicalAgent(m.Agent), len(lines), m.StartLine(), len(lines), m.Start, m.LegacyStart)
 			if m.Start < 0 || m.LegacyStart < 0 {
 				return t, fmt.Errorf("checkpoint %s session %s: negative transcript offset (checkpoint_transcript_start=%d, transcript_lines_at_start=%d)", cp.Summary.CheckpointID, m.SessionID, m.Start, m.LegacyStart)
 			}
@@ -77,12 +92,14 @@ func Restore(ctx context.Context, store Store, spec string) (Timeline, error) {
 			}
 		}
 		coverage := make([][]string, len(last.lines))
+		diag.printf("compare session=%q snapshots=%d reference_checkpoint=%q reference_raw_lines=%d", id, len(snaps), last.checkpoint, len(last.lines))
 		for _, s := range snaps {
 			if canonicalAgent(s.metadata.Agent) != canonicalAgent(last.metadata.Agent) {
 				return t, fmt.Errorf("session %s changes agent across checkpoints", id)
 			}
 			for i, line := range s.lines {
 				if !bytes.Equal(bytes.TrimSpace(line), bytes.TrimSpace(last.lines[i])) {
+					diag.mismatch(s, last, i)
 					return t, fmt.Errorf("session %s: non-cumulative or rewritten transcript at raw line %d between checkpoints %s and %s; cannot safely merge offsets", id, i, s.checkpoint, last.checkpoint)
 				}
 				if i >= s.metadata.StartLine() {
@@ -147,5 +164,6 @@ func Restore(ctx context.Context, store Store, spec string) (Timeline, error) {
 		}
 		return a.Line < b.Line
 	})
+	diag.printf("restored checkpoints=%d sessions=%d events=%d", t.Checkpoints, len(t.Sessions), len(t.Events))
 	return t, nil
 }
