@@ -29,6 +29,7 @@ Options:
   --output PATH            Write output to a file (default: stdout; '-' = stdout)
   --checkpoint-ref REF     Additional metadata branch/ref (repeatable)
   --width N                Separator/tool summary width (default: COLUMNS or 80)
+  --verbose                Print restore diagnostics without event values to stderr
   -h, --help               Show help
 
 Supported agents: Copilot CLI, Claude Code. Requires Git; no Entire CLI or API
@@ -63,6 +64,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	format := fs.String("format", "text", "")
 	output := fs.String("output", "", "")
 	tools := fs.Bool("include-tools", false, "")
+	verbose := fs.Bool("verbose", false, "")
 	widthDefault := 80
 	if n, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && n > 0 {
 		widthDefault = n
@@ -111,7 +113,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if dir == "" {
 		dir = "."
 	}
-	t, err := timeline.Restore(ctx, timeline.GitStore{Dir: dir, ExtraRefs: extra}, positionals[0])
+	t, err := restoreTimeline(ctx, timeline.GitStore{Dir: dir, ExtraRefs: extra}, positionals[0], *verbose, stderr)
 	if err != nil {
 		return err
 	}

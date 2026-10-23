@@ -66,6 +66,33 @@ entire timeline main...HEAD --checkpoint-ref refs/heads/my-checkpoints
 
 複数のmerge-baseがある場合は、曖昧な抽出を避けるためエラーにします。明示的な`A..B`を指定してください。
 
+## 復元エラーの診断
+
+`--verbose`で、復元時に比較したCheckpoint・Sessionと、不一致の構造をstderrへ出せます。`summarize`でも使えます。
+
+```sh
+# 正常終了した場合も会話本文を保存せず、診断用stderrだけを保存
+entire timeline main...HEAD --verbose >/dev/null 2>timeline-debug.log
+
+entire timeline summarize main...HEAD --verbose
+```
+
+`non-cumulative or rewritten transcript`の場合は、次の情報が手掛かりになります。
+
+| ログ | 意味 |
+| --- | --- |
+| `snapshot` | Checkpointごとの生履歴の行数・開始オフセット・選択区間 |
+| `prefix_mismatch` | 不一致のCheckpoint、最初に違う行、比較範囲内の不一致行数 |
+| `raw_line=8 physical_line=9` | 0始まりのオフセット8、ファイル上では9行目 |
+| `inside_selected_range` | 最初の不一致行が、それぞれのCheckpointの選択区間内か |
+| `decoded_json_equal=true` | JSONとしてdecodeした結果は同じ。キー順・空白・文字列エスケープ等の表記差の可能性。数字の表記は区別 |
+| `changed_path=/data/reasoningText` | 値が違うフィールドの場所。値そのものは出さない |
+| `nearby_exact_match` | 前後5行の別の位置に同じ行がある。挿入・削除や重複の手掛かり |
+
+追加の診断ログには本文・CoT・Toolの引数／結果の値を出しません。Session／Checkpoint ID、既知のAgent・イベント種別、フィールドの場所・型・サイズ・一致判定を出します。任意のJSONキーは`<other-key>`に置き換え、Tool引数・結果・context等の内部キーは展開しません。差分の列挙は最大16件、深さ8、訪問512ノードまでです。
+
+`--verbose`は診断を追加するだけで、履歴を統合する検証条件や終了コードは変えません。JSONLのstdoutにも混ざりません。表示コマンド自体は本文を出すため、診断だけが必要なら上の例のようにstdoutを`/dev/null`へ向けてください。
+
 ## 表示とエクスポート
 
 各イベントに日時、短いSessionラベル、Role、Agentを表示します。冒頭にSessionラベルと元のSession IDの対応表が出ます。

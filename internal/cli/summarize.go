@@ -25,6 +25,7 @@ Options:
   --force                 Regenerate even valid existing summaries
   --batch-bytes N         Input budget before splitting (default: 131072 bytes)
   --checkpoint-ref REF    Additional checkpoint ref (repeatable)
+  --verbose               Print restore diagnostics without event values to stderr
   -h, --help              Show help
 
 Large conversations are split on message boundaries with nearby context.
@@ -91,6 +92,7 @@ func runSummarize(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	fs := flag.NewFlagSet("summarize", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	force := fs.Bool("force", false, "")
+	verbose := fs.Bool("verbose", false, "")
 	budget := fs.Int("batch-bytes", summary.DefaultBatchBytes, "")
 	var extra refs
 	fs.Var(&extra, "checkpoint-ref", "")
@@ -122,7 +124,7 @@ func runSummarize(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err := s.CheckGenerator(); err != nil {
 		return err
 	}
-	t, err := timeline.Restore(ctx, timeline.GitStore{Dir: r.Dir, ExtraRefs: extra}, pos[0])
+	t, err := restoreTimeline(ctx, timeline.GitStore{Dir: r.Dir, ExtraRefs: extra}, pos[0], *verbose, stderr)
 	if err != nil {
 		return err
 	}
@@ -143,4 +145,12 @@ func runSummarize(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 	fmt.Fprintf(stderr, "entire-timeline: Saved %d summaries locally; reused %d; missing %d (%d Copilot calls).\n", result.Generated, result.Reused, result.Missing, result.Requests)
 	return genErr
+}
+
+func restoreTimeline(ctx context.Context, store timeline.GitStore, spec string, verbose bool, stderr io.Writer) (timeline.Timeline, error) {
+	opt := timeline.RestoreOptions{}
+	if verbose {
+		opt.Diagnostics = stderr
+	}
+	return timeline.RestoreWithOptions(ctx, store, spec, opt)
 }
