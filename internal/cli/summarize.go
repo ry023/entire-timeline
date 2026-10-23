@@ -124,7 +124,7 @@ func runSummarize(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err := s.CheckGenerator(); err != nil {
 		return err
 	}
-	t, err := restoreTimeline(ctx, timeline.GitStore{Dir: r.Dir, ExtraRefs: extra}, pos[0], *verbose, stderr)
+	t, err := restoreTimeline(ctx, timeline.GitStore{Dir: r.Dir, ExtraRefs: extra}, pos[0], *verbose, false, stderr)
 	if err != nil {
 		return err
 	}
@@ -147,8 +147,8 @@ func runSummarize(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	return genErr
 }
 
-func restoreTimeline(ctx context.Context, store timeline.GitStore, spec string, verbose bool, stderr io.Writer) (timeline.Timeline, error) {
-	opt := timeline.RestoreOptions{}
+func restoreTimeline(ctx context.Context, store timeline.GitStore, spec string, verbose, includeUnattributed bool, stderr io.Writer) (timeline.Timeline, error) {
+	opt := timeline.RestoreOptions{IncludeUnattributed: includeUnattributed}
 	if verbose {
 		opt.Diagnostics = stderr
 	}

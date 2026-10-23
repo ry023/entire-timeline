@@ -83,6 +83,9 @@ func Generate(ctx context.Context, events []timeline.Event, existing map[string]
 	var result Result
 	var messages []message
 	for _, e := range events {
+		if e.Error != nil || e.Attribution != nil {
+			continue
+		}
 		text := e.ConversationText()
 		if strings.TrimSpace(text) == "" {
 			continue

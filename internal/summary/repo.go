@@ -160,6 +160,9 @@ func (r *Repo) Load(ctx context.Context, events []timeline.Event) (map[string]Re
 	rows := map[string]Record{}
 	seen := map[string]bool{}
 	for _, e := range events {
+		if e.Error != nil {
+			continue
+		}
 		name := sessionPath(e.Agent, e.SessionID)
 		if seen[name] {
 			continue

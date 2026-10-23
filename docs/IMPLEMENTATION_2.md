@@ -15,6 +15,8 @@ entire timeline hooks uninstall
 
 直接実行の`entire-timeline`でも同じです。追加のGo依存はありません。生成元・生成providerはCopilot CLIのみです。既存のClaude Codeの復元・表示は維持します。
 
+追加対応として、Checkpoint本体がローカルで見つからない場合は復元を継続し、`timeline.error`／`checkpoint_unavailable`の欠落レコードを出すようにしました。`--include-unattributed`を表示コマンドに指定すると、前後の有効Checkpointに挟まれた未割当の会話も、紐づき未確定の補助情報として読めます。欠落レコードと補助会話は要約生成に渡しません。スキーマ・終了コード・補助表示の条件は[README](../README.md#checkpointが欠落している場合)に記載しています。
+
 ## 計画時の未確定事項に対する実装
 
 | 項目 | 今回の実装 |
@@ -97,5 +99,6 @@ git diff --check
 | `internal/cli/summarize_test.go` | Fake Copilot実行、argv/cwd/環境・入力の検証、保存・表示・再利用・再生成・部分失敗・キャンセル |
 | `internal/cli/remote_test.go` | 実バイナリのhook登録→実際のGit push→bare remoteへの要約同期→解除→初回取得 |
 | `internal/cli/run_test.go` | 既存CLI、Entire外部コマンドとの一致 |
+| `internal/timeline/gaps_test.go` / `internal/cli/gaps_test.go` | Checkpoint欠落時の継続・専用エラーレコード・任意の未割当会話表示・要約入力からの除外 |
 
 モデルによる実際の生成や外部サービスへのpushはテストでは行いません。生成はFake Copilot、同期は一時bareリポジトリで検証します。Entire CLIがなければ外部コマンドの追加smoke testだけskipします。本家ソースの参照先は[PLAN_2末尾](PLAN_2.md#12-本家調査の参照先)に記載しています。

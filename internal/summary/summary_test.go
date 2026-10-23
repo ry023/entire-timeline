@@ -99,7 +99,10 @@ func TestBatchConversationOnlyAndReuse(t *testing.T) {
 		}
 		return response(t, ms), nil
 	})
-	result, err := Generate(context.Background(), []timeline.Event{a, b, c}, existing, g, Options{Model: "test-model"})
+	unattributed := event("s", 2, "UNCONFIRMED CONTEXT")
+	unattributed.Attribution = &timeline.Attribution{Status: "unattributed"}
+	gap := timeline.Event{Type: "timeline.error", Error: &timeline.MissingCheckpointError{Code: "checkpoint_unavailable"}}
+	result, err := Generate(context.Background(), []timeline.Event{a, gap, b, unattributed, c}, existing, g, Options{Model: "test-model"})
 	if err != nil || result.Generated != 2 || result.Reused != 1 || calls != 1 || result.Missing != 0 {
 		t.Fatalf("%+v %v calls=%d", result, err, calls)
 	}

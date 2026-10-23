@@ -25,6 +25,7 @@ A...B means merge-base(A,B)..B. Options may precede or follow the range.
 
 Options:
   --include-tools          Print complete tool calls/results and original events
+  --include-unattributed   Include bounded session context with unconfirmed linkage
   --format text|jsonl       Output format (default: text)
   --output PATH            Write output to a file (default: stdout; '-' = stdout)
   --checkpoint-ref REF     Additional metadata branch/ref (repeatable)
@@ -33,7 +34,7 @@ Options:
   -h, --help               Show help
 
 Supported agents: Copilot CLI, Claude Code. Requires Git; no Entire CLI or API
-is required for direct execution. Missing local checkpoints are an error.
+is required for direct execution. Unavailable checkpoints appear as gap records.
 `
 
 type refs []string
@@ -64,6 +65,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	format := fs.String("format", "text", "")
 	output := fs.String("output", "", "")
 	tools := fs.Bool("include-tools", false, "")
+	unattributed := fs.Bool("include-unattributed", false, "")
 	verbose := fs.Bool("verbose", false, "")
 	widthDefault := 80
 	if n, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && n > 0 {
@@ -113,7 +115,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if dir == "" {
 		dir = "."
 	}
-	t, err := restoreTimeline(ctx, timeline.GitStore{Dir: dir, ExtraRefs: extra}, positionals[0], *verbose, stderr)
+	t, err := restoreTimeline(ctx, timeline.GitStore{Dir: dir, ExtraRefs: extra}, positionals[0], *verbose, *unattributed, stderr)
 	if err != nil {
 		return err
 	}

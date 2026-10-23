@@ -66,6 +66,39 @@ entire timeline main...HEAD --checkpoint-ref refs/heads/my-checkpoints
 
 複数のmerge-baseがある場合は、曖昧な抽出を避けるためエラーにします。明示的な`A..B`を指定してください。
 
+## Checkpointが欠落している場合
+
+コミットの`Entire-Checkpoint`トレーラーにIDがあっても、Checkpoint本体がローカルで見つからない場合は、その箇所に欠落イベントを挟んで出力を続けます。通常表示は`[CHECKPOINT GAP]`、JSONLは専用のエラーレコードになります。欠落があっても表示の終了コードは0で、stderrに不完全なtimelineである旨を警告します。全Checkpointが欠けている場合も欠落レコードを出力します。
+
+```json
+{"type":"timeline.error","role":"system","error":{"code":"checkpoint_unavailable","checkpoint_id":"bbbbbbbbbbbb","message":"Referenced by commit, but checkpoint data is unavailable locally; remote availability has not been checked.","commits":[{"sha":"参照元コミットのSHA","timestamp":"2026-10-23T09:02:00Z"}],"previous_checkpoint_id":"aaaaaaaaaaaa","next_checkpoint_id":"cccccccccccc","placement":"after_previous_checkpoint"}}
+```
+
+同じ欠落IDを複数コミットが参照していれば1レコードにまとめ、`error.commits`に参照元を並べます。会話の時刻・Session・物理行番号・元イベントは不明なので、欠落レコードに`timestamp`・`session_id`・`source_line`・`raw`は付けません。`error.commits[].timestamp`はGitのcommitter時刻です。
+
+表示位置は前後の既知Checkpointのイベントを目安にし、`previous_checkpoint_id`／`next_checkpoint_id`と`placement`に根拠を残します。会話上の正確な位置を保証するものではありません。前後にイベントがない場合はGitコミット時刻を目安にし、それでも置けなければ末尾に置きます。
+
+このツールは自動fetchしないため、`checkpoint_unavailable`はローカルの参照先で取得できないという意味です。リモートにも存在しないと確認した意味ではありません。取得できたCheckpointのJSON破損・不整合・生履歴の書き換え等は、引き続き終了コード1のエラーにします。
+
+### 紐づきが未確定の会話を表示する
+
+後続Checkpointに累積履歴が残っていれば、欠落に近い会話を読むための補助表示ができます。**オプション指定時だけ有効**です。
+
+```sh
+entire timeline main...HEAD --include-unattributed
+entire timeline main...HEAD --include-unattributed --format jsonl
+```
+
+選択範囲内の同じSessionの有効Checkpoint A・Cの間に欠落IDがあり、`Aの生履歴末尾`から`Cの開始オフセット`までに未割当の行が残る場合、その行をCの累積履歴から補います。両端の累積履歴の接頭辞一致を検証し、既に復元した行は重複させません。片方の境界しか分からない場合や、両端の間に欠落IDがない通常の非連続区間では追加しません。全Session履歴への置き換えや、Agentのローカル履歴ディレクトリの探索は行いません。
+
+補ったイベントには通常表示で`[UNATTRIBUTED CONTEXT]`を付け、JSONLには次の属性を追加します。
+
+```json
+{"status":"unattributed","source_checkpoint_id":"cccccccccccc","previous_checkpoint_id":"aaaaaaaaaaaa","next_checkpoint_id":"cccccccccccc","nearby_missing_checkpoint_ids":["bbbbbbbbbbbb"]}
+```
+
+これはイベントの`attribution`フィールドです。元の`raw`・Session・物理行番号は保持し、`checkpoints`は空配列にします。近くの欠落IDがそのSessionに属するか、この会話が指定コミット範囲に属するかは確定できないためです。欠落Checkpointへの関連付けを推測して作りません。欠落マーカーは補助会話が読めた場合も残します。欠落レコード・補助会話は要約providerへ渡さず、`--include-unattributed`は表示コマンドだけのオプションです。
+
 ## 復元エラーの診断
 
 `--verbose`で、復元時に比較したCheckpoint・Sessionと、不一致の構造をstderrへ出せます。`summarize`でも使えます。
@@ -101,7 +134,7 @@ entire timeline summarize main...HEAD --verbose
 
 本文は端末のソフトラップに任せ、改行・インデント・コードブロックを保持します。区切り線とツール概要の幅は`--width`、`COLUMNS`、80の優先順で決めます（区切り線は最大100桁）。ANSIカラーや自動ページャーは使いません。
 
-JSONLは1行につき1元イベントです。ツール・システムイベントも含み、`--include-tools`によって復元結果は変わりません。
+JSONLの通常行は1行につき1元イベントです。ツール・システムイベントも含み、`--include-tools`によって復元結果は変わりません。欠落時は上記の`timeline.error`レコードも含まれます。
 
 | フィールド | 内容 |
 | --- | --- |
@@ -115,10 +148,11 @@ JSONLは1行につき1元イベントです。ツール・システムイベン�
 | `parts` | 表示用のテキスト・ツール・未知ブロック |
 | `raw` | 元のイベント全体。未知フィールドも保持 |
 | `summary` | 本文と一致する保存済み要約。存在する場合のみ |
+| `attribution` | `--include-unattributed`で補った行の出典・未確定の紐づき。存在する場合のみ |
 
 `raw`はJSON値として保持します。空白やエスケープ表記のバイト単位の保存は保証しませんが、元イベントの情報を削除しません。IDがないUserイベントにも、衝突し得る合成IDを付けません。同じ内容やIDでも別の物理行なら保持します。
 
-stdoutは表示結果専用です。JSONLモードではJSONL以外を出力しません。警告・エラーはstderrに出し、失敗時は終了コード1になります。全復元を検証してから出力を開始します。ファイル出力は同じディレクトリの一時ファイルから置換し、復元の失敗で既存出力を切り詰めません。新しいファイルの権限は`0600`です。
+stdoutは表示結果専用です。JSONLモードではJSONL以外を出力しません。診断はstderrに出し、復元に失敗した場合は終了コード1になります。Checkpoint本体の欠落は専用レコードとして出力を続け、終了コード0にします。取得できたデータを検証してから出力を開始します。ファイル出力は同じディレクトリの一時ファイルから置換し、復元の失敗で既存出力を切り詰めません。新しいファイルの権限は`0600`です。
 
 `parts[].kind`は会話本文の`text`とCoTの`reasoning`を区別します。会話本文だけを読む例：
 
