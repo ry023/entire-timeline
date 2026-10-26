@@ -101,7 +101,7 @@ type Event struct {
 	Line        int                     `json:"source_line"`
 	Checkpoints []string                `json:"checkpoints"`
 	Parts       []Part                  `json:"parts,omitempty"`
-	Raw         json.RawMessage         `json:"raw"`
+	Raw         json.RawMessage         `json:"raw,omitempty"`
 	Summary     string                  `json:"summary,omitempty"`
 	Error       *MissingCheckpointError `json:"error,omitempty"`
 	Attribution *Attribution            `json:"attribution,omitempty"`
