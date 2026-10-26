@@ -40,6 +40,9 @@ entire timeline main...HEAD
 # Gitの通常の到達可能性による範囲
 entire timeline main..HEAD
 
+# User／Assistantの会話本文だけを読む
+entire timeline main...HEAD --filter conversation
+
 # ツールの引数・結果・元イベントも全文表示
 entire timeline main...HEAD --include-tools
 
@@ -128,13 +131,30 @@ entire timeline summarize main...HEAD --verbose
 
 ## 表示とエクスポート
 
+`--filter`で出す内容を選び、`--format`で出力形式を選びます。両方を組み合わせられます。
+
+```sh
+entire timeline main...HEAD --filter conversation
+entire timeline main...HEAD --filter conversation --format jsonl
+entire timeline main...HEAD --filter conversation --include-unattributed
+```
+
+| フィルタ | 内容 |
+| --- | --- |
+| `all`（既定） | 全イベント・全content blockを保持する従来の表示／エクスポート |
+| `conversation` | User／Assistantの本文だけを残す。CoT・Tool・システムイベント、本文のない発言、ストリーミング断片を除く |
+
+混在イベントでも`parts`から会話本文だけを残し、Markdown・改行・コードブロック・複数text blockを省略しません。日時・Session・元の行番号・Checkpoint情報、有効な保存済み要約は保持します。欠落レコードは常に残し、`--include-unattributed`で補った本文にも紐づき未確定の印を残します。表示されなくなったSessionは対応表から除きます。
+
+`conversation`は本文の投影なので、JSONLでもCoTやToolデータが再び混ざらないよう`raw`を省略します。元イベントを保持したエクスポートには`--filter all`を使ってください。`--include-tools`と`--filter conversation`は併用できません。フィルタは復元・検証後の表示に適用し、保存済み履歴や要約生成の対象を変更しません。
+
 各イベントに日時、短いSessionラベル、Role、Agentを表示します。冒頭にSessionラベルと元のSession IDの対応表が出ます。
 
 通常表示でもツールの名前・引数の概要とTool Resultの存在がわかります。長いツール引数だけを短縮し、発言本文は省略しません。`--include-tools`ではツール詳細と元イベントのJSONを併記します。未知のイベントやcontent blockはJSONとして表示し、黙って捨てません。
 
 本文は端末のソフトラップに任せ、改行・インデント・コードブロックを保持します。区切り線とツール概要の幅は`--width`、`COLUMNS`、80の優先順で決めます（区切り線は最大100桁）。ANSIカラーや自動ページャーは使いません。
 
-JSONLの通常行は1行につき1元イベントです。ツール・システムイベントも含み、`--include-tools`によって復元結果は変わりません。欠落時は上記の`timeline.error`レコードも含まれます。
+JSONLの通常行は1行につき1元イベントです。既定の`--filter all`ではツール・システムイベントも含み、`--include-tools`によって復元結果は変わりません。欠落時は上記の`timeline.error`レコードも含まれます。
 
 | フィールド | 内容 |
 | --- | --- |
@@ -146,18 +166,18 @@ JSONLの通常行は1行につき1元イベントです。ツール・システ�
 | `source_line` | `full.jsonl`内の0始まりの物理行番号 |
 | `checkpoints` | その行を対象区間に含むCheckpoint IDの配列 |
 | `parts` | 表示用のテキスト・ツール・未知ブロック |
-| `raw` | 元のイベント全体。未知フィールドも保持 |
+| `raw` | 元のイベント全体。未知フィールドも保持。`--filter conversation`では省略 |
 | `summary` | 本文と一致する保存済み要約。存在する場合のみ |
 | `attribution` | `--include-unattributed`で補った行の出典・未確定の紐づき。存在する場合のみ |
 
-`raw`はJSON値として保持します。空白やエスケープ表記のバイト単位の保存は保証しませんが、元イベントの情報を削除しません。IDがないUserイベントにも、衝突し得る合成IDを付けません。同じ内容やIDでも別の物理行なら保持します。
+`--filter all`の`raw`はJSON値として保持します。空白やエスケープ表記のバイト単位の保存は保証しませんが、元イベントの情報を削除しません。IDがないUserイベントにも、衝突し得る合成IDを付けません。同じ内容やIDでも別の物理行なら保持します。
 
 stdoutは表示結果専用です。JSONLモードではJSONL以外を出力しません。診断はstderrに出し、復元に失敗した場合は終了コード1になります。Checkpoint本体の欠落は専用レコードとして出力を続け、終了コード0にします。取得できたデータを検証してから出力を開始します。ファイル出力は同じディレクトリの一時ファイルから置換し、復元の失敗で既存出力を切り詰めません。新しいファイルの権限は`0600`です。
 
-`parts[].kind`は会話本文の`text`とCoTの`reasoning`を区別します。会話本文だけを読む例：
+`parts[].kind`は会話本文の`text`とCoTの`reasoning`を区別します。Roleと本文だけをさらに簡潔に整形する例：
 
 ```sh
-entire timeline main...HEAD --format jsonl | jq -r 'select(.role == "user" or .role == "assistant") | {role, text: ([.parts[]? | select(.kind == "text") | .text] | join("\n\n"))} | select(.text != "") | "\(.role): \(.text)\n"'
+entire timeline main...HEAD --filter conversation --format jsonl | jq -r 'select(.role == "user" or .role == "assistant") | "\(.role): \([.parts[].text] | join("\n\n"))\n"'
 ```
 
 ## 発言ごとの要約

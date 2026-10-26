@@ -26,6 +26,7 @@ A...B means merge-base(A,B)..B. Options may precede or follow the range.
 Options:
   --include-tools          Print complete tool calls/results and original events
   --include-unattributed   Include bounded session context with unconfirmed linkage
+  --filter all|conversation Select events and content (default: all)
   --format text|jsonl       Output format (default: text)
   --output PATH            Write output to a file (default: stdout; '-' = stdout)
   --checkpoint-ref REF     Additional metadata branch/ref (repeatable)
@@ -63,6 +64,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("entire-timeline", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	format := fs.String("format", "text", "")
+	filterName := fs.String("filter", "all", "")
 	output := fs.String("output", "", "")
 	tools := fs.Bool("include-tools", false, "")
 	unattributed := fs.Bool("include-unattributed", false, "")
@@ -91,7 +93,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		flags = append(flags, arg)
 		key, _, equal := strings.Cut(arg, "=")
-		if !equal && (key == "--format" || key == "--output" || key == "--width" || key == "--checkpoint-ref") {
+		if !equal && (key == "--format" || key == "--filter" || key == "--output" || key == "--width" || key == "--checkpoint-ref") {
 			i++
 			if i >= len(args) {
 				return fmt.Errorf("%s needs a value", arg)
@@ -111,6 +113,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *width < 1 {
 		return fmt.Errorf("--width must be positive")
 	}
+	filter, err := timeline.ParseFilter(*filterName)
+	if err != nil {
+		return err
+	}
+	if *filterName == "conversation" && *tools {
+		return fmt.Errorf("--include-tools cannot be combined with --filter conversation; use --filter all for tool details")
+	}
 	dir := os.Getenv("ENTIRE_REPO_ROOT")
 	if dir == "" {
 		dir = "."
@@ -128,6 +137,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	summary.Attach(&t, rows)
+	t = filter.Apply(t)
 	for _, warning := range t.Warnings {
 		fmt.Fprintln(stderr, "entire-timeline: warning:", warning)
 	}
