@@ -9,24 +9,27 @@ import (
 	"testing"
 )
 
-func TestRestoreDiagnosticSerializationDifferenceStillFails(t *testing.T) {
+func TestRestoreDiagnosticIndependentSnapshots(t *testing.T) {
 	header := strings.Repeat("{\"type\":\"session.start\"}\n", 8)
 	a := []byte(header + `{"type":"assistant.message","data":{"content":"PRIVATE body","reasoningText":"PRIVATE reasoning"}}`)
 	b := []byte(header + `{"data": {"reasoningText":"PRIVATE reasoning", "content":"PRIVATE \u0062ody"}, "type":"assistant.message"}`)
 	store := fixtureStore{[][]fixtureSession{{{id: "s", start: 8, data: a}}, {{id: "s", start: 8, data: b}}}}
-	_, plainErr := Restore(context.Background(), store, "base..HEAD")
+	plain, plainErr := Restore(context.Background(), store, "base..HEAD")
 	var log bytes.Buffer
-	_, verboseErr := RestoreWithOptions(context.Background(), store, "base..HEAD", RestoreOptions{Diagnostics: &log})
-	if plainErr == nil || verboseErr == nil || plainErr.Error() != verboseErr.Error() {
+	verbose, verboseErr := RestoreWithOptions(context.Background(), store, "base..HEAD", RestoreOptions{Diagnostics: &log})
+	if plainErr != nil || verboseErr != nil || len(plain.Events) != 2 || len(verbose.Events) != 2 {
 		t.Fatal(plainErr, verboseErr)
 	}
-	for _, want := range []string{"selected_checkpoints=2", "selected_raw_range=[8,9)", "raw_line=8 physical_line=9", "different_lines=1", "decoded_json_equal=true", "possible_serialization_only_difference=true"} {
+	for _, want := range []string{"selected_checkpoints=2", "selected_raw_range=[8,9)", "restore_mode=per_checkpoint", `restored_snapshot checkpoint="0"`, `restored_snapshot checkpoint="1"`} {
 		if !strings.Contains(log.String(), want) {
 			t.Fatalf("missing %q: %s", want, log.String())
 		}
 	}
 	if strings.Contains(log.String(), "PRIVATE") {
 		t.Fatalf("leaked event text: %s", log.String())
+	}
+	if strings.Contains(log.String(), "prefix_mismatch") {
+		t.Fatal("normal restoration still compares checkpoint prefixes")
 	}
 }
 

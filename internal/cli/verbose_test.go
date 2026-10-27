@@ -3,11 +3,15 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ry023/entire-timeline/internal/summary"
 )
 
 func TestVerboseJSONLStaysClean(t *testing.T) {
@@ -37,7 +41,7 @@ func TestVerboseJSONLStaysClean(t *testing.T) {
 	}
 }
 
-func TestVerboseExplainsRealCheckpointMismatch(t *testing.T) {
+func TestVerboseRestoresIndependentCheckpoints(t *testing.T) {
 	dir, spec := cliRepo(t)
 	t.Setenv("ENTIRE_REPO_ROOT", dir)
 	git := func(input []byte, index string, args ...string) []byte {
@@ -68,21 +72,28 @@ func TestVerboseExplainsRealCheckpointMismatch(t *testing.T) {
 	hash := strings.TrimSpace(string(git(nil, "", "commit-tree", tree, "-m", "checkpoint")))
 	git(nil, "", "update-ref", "refs/entire/checkpoints/bb/bbbbbbbbbbbb", hash)
 	git(nil, "", "commit", "--allow-empty", "-m", "more work\n\nEntire-Checkpoint: bbbbbbbbbbbb")
-	// Both viewing and generation diagnose restore failure before any output or
-	// provider execution. A private output file is never replaced on failure.
-	os.MkdirAll(filepath.Join(dir, ".entire"), 0700)
-	os.WriteFile(filepath.Join(dir, ".entire/settings.json"), []byte(`{"summary_generation":{"provider":"copilot-cli"}}`), 0600)
+	// The different reasoning payloads must not stop either viewing or summary
+	// generation. Six per-checkpoint conversation records are requested.
+	bin := fakeCopilot(t, dir)
+	var response bytes.Buffer
+	for i := 1; i <= 6; i++ {
+		json.NewEncoder(&response).Encode(map[string]string{"id": fmt.Sprintf("m%d", i), "summary": "要約"})
+	}
+	os.WriteFile(filepath.Join(bin, "response"), response.Bytes(), 0600)
 	output := filepath.Join(t.TempDir(), "existing.jsonl")
 	os.WriteFile(output, []byte("preserve existing export"), 0600)
-	for _, args := range [][]string{{spec, "--verbose", "--format=jsonl", "--output", output}, {"summarize", spec, "--verbose"}} {
+	for _, args := range [][]string{{spec, "--verbose", "--format=jsonl", "--output", output}, {spec, "--verbose", "--filter=conversation", "--format=jsonl"}, {"summarize", spec, "--verbose"}} {
 		var out, diag bytes.Buffer
-		if Run(context.Background(), args, &out, &diag) != 1 || out.Len() != 0 {
+		if Run(context.Background(), args, &out, &diag) != 0 {
 			t.Fatalf("%v: %s %s", args, out.String(), diag.String())
 		}
-		for _, want := range []string{"prefix_mismatch", "raw_line=2 physical_line=3", "decoded_json_equal=false", "changed_path=/data/reasoningText", "cannot safely merge offsets"} {
+		for _, want := range []string{"restore_mode=per_checkpoint", `restored_snapshot checkpoint="aaaaaaaaaaaa"`, `restored_snapshot checkpoint="bbbbbbbbbbbb"`, "restored checkpoints=2 sessions=1 events=12"} {
 			if !strings.Contains(diag.String(), want) {
 				t.Fatalf("missing %q: %s", want, diag.String())
 			}
+		}
+		if strings.Contains(diag.String(), "cannot safely merge offsets") || strings.Contains(diag.String(), "prefix_mismatch") {
+			t.Fatal(diag.String())
 		}
 		for _, secret := range []string{"PRIVATE_REWRITTEN_REASONING", "既存テストを確認する。", "SECRET TOOL RESULT"} {
 			if strings.Contains(diag.String(), secret) {
@@ -91,7 +102,22 @@ func TestVerboseExplainsRealCheckpointMismatch(t *testing.T) {
 		}
 	}
 	data, _ := os.ReadFile(output)
-	if string(data) != "preserve existing export" {
-		t.Fatal("failed verbose restore replaced export")
+	if len(bytes.Split(bytes.TrimSpace(data), []byte{'\n'})) != 12 || !bytes.Contains(data, []byte(`"checkpoint_id":"aaaaaaaaaaaa"`)) || !bytes.Contains(data, []byte(`"checkpoint_id":"bbbbbbbbbbbb"`)) {
+		t.Fatal("independent checkpoint export is incomplete")
+	}
+	stored := git(nil, "", "show", summary.MetadataRef+":summaries/copilot-cli/test-session.jsonl")
+	lines := bytes.Split(bytes.TrimSpace(stored), []byte{'\n'})
+	if len(lines) != 6 {
+		t.Fatalf("same source lines overwrote summaries across checkpoints: %s", stored)
+	}
+	for _, line := range lines {
+		var row summary.Record
+		if err := json.Unmarshal(line, &row); err != nil || row.SchemaVersion != 2 || row.CheckpointID == "" {
+			t.Fatal(string(line), err)
+		}
+	}
+	var view, diag bytes.Buffer
+	if Run(context.Background(), []string{spec, "--filter=conversation", "--format=jsonl"}, &view, &diag) != 0 || strings.Count(view.String(), `"summary":"要約"`) != 6 {
+		t.Fatal(view.String(), diag.String())
 	}
 }

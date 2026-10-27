@@ -1,6 +1,8 @@
 package timeline
 
 import (
+	"bytes"
+	"fmt"
 	"sort"
 )
 
@@ -85,14 +87,20 @@ func insertCheckpointGaps(t *Timeline, cps []Checkpoint) {
 // same cumulative session, and requires a missing checkpoint between them in
 // the selected commit order. These lines are not assigned to that checkpoint:
 // it may belong to a different session, or the lines may concern excluded work.
-func unattributedLines(snaps []snapshot, cps []Checkpoint, coverage [][]string) map[int]*Attribution {
+type contextRange struct {
+	start       int
+	attribution *Attribution
+}
+
+func unattributedContexts(snaps []snapshot, cps []Checkpoint, diag diagnostics) (map[string]contextRange, []string) {
 	positions := map[string]int{}
 	for i, cp := range cps {
 		positions[cp.Summary.CheckpointID] = i
 	}
 	ordered := append([]snapshot(nil), snaps...)
 	sort.SliceStable(ordered, func(i, j int) bool { return positions[ordered[i].checkpoint] < positions[ordered[j].checkpoint] })
-	out := map[int]*Attribution{}
+	out := map[string]contextRange{}
+	var warnings []string
 	for i := 1; i < len(ordered); i++ {
 		prev, next := ordered[i-1], ordered[i]
 		start, end := len(prev.lines), next.metadata.StartLine()
@@ -108,12 +116,24 @@ func unattributedLines(snaps []snapshot, cps []Checkpoint, coverage [][]string) 
 		if len(missing) == 0 {
 			continue
 		}
-		attr := &Attribution{Status: "unattributed", SourceCheckpointID: next.checkpoint, PreviousCheckpointID: prev.checkpoint, NextCheckpointID: next.checkpoint, NearbyMissingCheckpointIDs: missing}
-		for line := start; line < end; line++ {
-			if len(coverage[line]) == 0 {
-				out[line] = attr
+		reason := ""
+		if canonicalAgent(prev.metadata.Agent) != canonicalAgent(next.metadata.Agent) {
+			reason = "agent differs"
+		} else {
+			for line := range prev.lines {
+				if !bytes.Equal(bytes.TrimSpace(prev.lines[line]), bytes.TrimSpace(next.lines[line])) {
+					diag.mismatch(prev, next, line)
+					reason = fmt.Sprintf("transcript prefix differs at raw line %d", line)
+					break
+				}
 			}
 		}
+		if reason != "" {
+			warnings = append(warnings, fmt.Sprintf("session %s checkpoints %s -> %s: unattributed context skipped (%s); checkpoint restoration continues", next.metadata.SessionID, prev.checkpoint, next.checkpoint, reason))
+			continue
+		}
+		attr := &Attribution{Status: "unattributed", SourceCheckpointID: next.checkpoint, PreviousCheckpointID: prev.checkpoint, NextCheckpointID: next.checkpoint, NearbyMissingCheckpointIDs: missing}
+		out[next.checkpoint] = contextRange{start: start, attribution: attr}
 	}
-	return out
+	return out, warnings
 }

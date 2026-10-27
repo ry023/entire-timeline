@@ -50,7 +50,7 @@ func (d diagnostics) mismatch(a, b snapshot, line int) {
 		equal := reflect.DeepEqual(x, y)
 		d.printf("decoded_json_equal=%t (object key order, whitespace and string escaping ignored; number spelling preserved)", equal)
 		if equal {
-			d.printf("possible_serialization_only_difference=true; strict prefix validation still stops restoration")
+			d.printf("possible_serialization_only_difference=true; unattributed context skipped, checkpoint restoration continues")
 		} else {
 			diff := structuralDiff{diag: d}
 			diff.walk("", x, true, y, true, 0)

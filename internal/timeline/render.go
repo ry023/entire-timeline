@@ -86,6 +86,9 @@ func RenderText(w io.Writer, t Timeline, opts TextOptions) error {
 			ts = e.Timestamp.Format("2006-01-02T15:04:05.999999999Z07:00")
 		}
 		fmt.Fprintf(&b, "\n%s\n\n[%s] [%s] %s (%s)\n\n", separator, ts, labels[e.SessionID], strings.ToUpper(e.Role), e.Agent)
+		if e.CheckpointID != "" {
+			fmt.Fprintf(&b, "Checkpoint: %s\n\n", e.CheckpointID)
+		}
 		if a := e.Attribution; a != nil {
 			fmt.Fprintf(&b, "[UNATTRIBUTED CONTEXT] No confirmed commit/checkpoint association.\nSource checkpoint: %s; between %s and %s.\n\n", a.SourceCheckpointID, a.PreviousCheckpointID, a.NextCheckpointID)
 		}

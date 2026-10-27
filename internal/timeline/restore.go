@@ -42,6 +42,7 @@ func Restore(ctx context.Context, store Store, spec string) (Timeline, error) {
 func RestoreWithOptions(ctx context.Context, store Store, spec string, opt RestoreOptions) (Timeline, error) {
 	diag := diagnostics{opt.Diagnostics}
 	diag.printf("selecting checkpoints from the local Git range")
+	diag.printf("restore_mode=per_checkpoint")
 	t := Timeline{Range: spec}
 	cps, err := store.Select(ctx, spec)
 	if err != nil {
@@ -92,84 +93,38 @@ func RestoreWithOptions(ctx context.Context, store Store, spec string, opt Resto
 	sort.Strings(t.Sessions)
 	for _, id := range t.Sessions {
 		snaps := groups[id]
-		last := snaps[0]
-		// The longest selected cumulative snapshot is the latest raw history.
-		// Commit topological order alone cannot order sessions attached later.
-		for _, s := range snaps {
-			if len(s.lines) >= len(last.lines) {
-				last = s
-			}
-		}
-		coverage := make([][]string, len(last.lines))
-		diag.printf("compare session=%q snapshots=%d reference_checkpoint=%q reference_raw_lines=%d", id, len(snaps), last.checkpoint, len(last.lines))
-		for _, s := range snaps {
-			if canonicalAgent(s.metadata.Agent) != canonicalAgent(last.metadata.Agent) {
-				return t, fmt.Errorf("session %s changes agent across checkpoints", id)
-			}
-			for i, line := range s.lines {
-				if !bytes.Equal(bytes.TrimSpace(line), bytes.TrimSpace(last.lines[i])) {
-					diag.mismatch(s, last, i)
-					return t, fmt.Errorf("session %s: non-cumulative or rewritten transcript at raw line %d between checkpoints %s and %s; cannot safely merge offsets", id, i, s.checkpoint, last.checkpoint)
-				}
-				if i >= s.metadata.StartLine() {
-					coverage[i] = append(coverage[i], s.checkpoint)
-				}
-			}
-		}
-		var contextLines map[int]*Attribution
+		var contexts map[string]contextRange
 		if opt.IncludeUnattributed {
-			contextLines = unattributedLines(snaps, cps, coverage)
+			var warnings []string
+			contexts, warnings = unattributedContexts(snaps, cps, diag)
+			t.Warnings = append(t.Warnings, warnings...)
 		}
-		var events []Event
-		for i, line := range last.lines {
-			if (len(coverage[i]) == 0 && contextLines[i] == nil) || len(bytes.TrimSpace(line)) == 0 {
-				continue
-			}
-			e, err := decode(last.metadata.Agent, line)
+		for _, s := range snaps {
+			events, warnings, err := restoreSnapshot(ctx, s, contexts[s.checkpoint])
 			if err != nil {
-				return t, fmt.Errorf("session %s raw line %d: %w", id, i, err)
+				return t, err
 			}
-			e.SessionID = id
-			e.Line = i
-			sort.Strings(coverage[i])
-			e.Checkpoints = coverage[i]
-			if attr := contextLines[i]; attr != nil {
-				e.Attribution = attr
-				e.Checkpoints = []string{}
-				t.UnattributedEvents++
+			for _, e := range events {
+				if e.Attribution != nil {
+					t.UnattributedEvents++
+				}
 			}
-			events = append(events, e)
+			t.Events = append(t.Events, events...)
+			t.Warnings = append(t.Warnings, warnings...)
+			diag.printf("restored_snapshot checkpoint=%q session=%q events=%d", s.checkpoint, id, len(events))
 		}
-		// Missing timestamps inherit the preceding time, or the next known time
-		// at the head. Clamp regressing clocks to preserve source session order.
-		var clock time.Time
-		for _, e := range events {
-			if e.Timestamp != nil {
-				clock = *e.Timestamp
-				break
-			}
-		}
-		missing, regressed := 0, 0
-		for i := range events {
-			e := &events[i]
-			if e.Timestamp == nil {
-				missing++
-			} else if e.Timestamp.Before(clock) {
-				regressed++
-			} else {
-				clock = *e.Timestamp
-			}
-			e.sortTime = clock
-		}
-		if missing > 0 {
-			t.Warnings = append(t.Warnings, fmt.Sprintf("session %s: %d event(s) have no timestamp; source order retained using adjacent known times", id, missing))
-		}
-		if regressed > 0 {
-			t.Warnings = append(t.Warnings, fmt.Sprintf("session %s: %d timestamp(s) regress; source order takes precedence over wall-clock order", id, regressed))
-		}
-		t.Events = append(t.Events, events...)
 	}
-	sort.Slice(t.Events, func(i, j int) bool {
+	checkpointOrder := map[string]int{}
+	for i, cp := range cps {
+		checkpointOrder[cp.Summary.CheckpointID] = i
+	}
+	sourceCheckpoint := func(e Event) string {
+		if e.Attribution != nil {
+			return e.Attribution.SourceCheckpointID
+		}
+		return e.CheckpointID
+	}
+	sort.SliceStable(t.Events, func(i, j int) bool {
 		a, b := t.Events[i], t.Events[j]
 		if a.sortTime.IsZero() != b.sortTime.IsZero() {
 			return !a.sortTime.IsZero()
@@ -180,6 +135,9 @@ func RestoreWithOptions(ctx context.Context, store Store, spec string, opt Resto
 		if a.SessionID != b.SessionID {
 			return a.SessionID < b.SessionID
 		}
+		if x, y := checkpointOrder[sourceCheckpoint(a)], checkpointOrder[sourceCheckpoint(b)]; x != y {
+			return x < y
+		}
 		return a.Line < b.Line
 	})
 	insertCheckpointGaps(&t, cps)
@@ -188,4 +146,60 @@ func RestoreWithOptions(ctx context.Context, store Store, spec string, opt Resto
 		diag.printf("incomplete_timeline missing_checkpoints=%d unattributed_events=%d", t.MissingCheckpoints, t.UnattributedEvents)
 	}
 	return t, nil
+}
+
+// Each checkpoint owns its offset coordinate system. A changed, inserted or
+// removed line in another snapshot cannot change what is extracted here.
+func restoreSnapshot(ctx context.Context, s snapshot, extra contextRange) ([]Event, []string, error) {
+	start := s.metadata.StartLine()
+	if extra.attribution != nil {
+		start = extra.start
+	}
+	var events []Event
+	for i := start; i < len(s.lines); i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if len(bytes.TrimSpace(s.lines[i])) == 0 {
+			continue
+		}
+		e, err := decode(s.metadata.Agent, s.lines[i])
+		if err != nil {
+			return nil, nil, fmt.Errorf("checkpoint %s session %s raw line %d: %w", s.checkpoint, s.metadata.SessionID, i, err)
+		}
+		e.SessionID, e.Line = s.metadata.SessionID, i
+		if i < s.metadata.StartLine() {
+			e.Attribution, e.Checkpoints = extra.attribution, []string{}
+		} else {
+			e.CheckpointID, e.Checkpoints = s.checkpoint, []string{s.checkpoint}
+		}
+		events = append(events, e)
+	}
+	var clock time.Time
+	for _, e := range events {
+		if e.Timestamp != nil {
+			clock = *e.Timestamp
+			break
+		}
+	}
+	missing, regressed := 0, 0
+	for i := range events {
+		e := &events[i]
+		if e.Timestamp == nil {
+			missing++
+		} else if e.Timestamp.Before(clock) {
+			regressed++
+		} else {
+			clock = *e.Timestamp
+		}
+		e.sortTime = clock
+	}
+	var warnings []string
+	if missing > 0 {
+		warnings = append(warnings, fmt.Sprintf("session %s checkpoint %s: %d event(s) have no timestamp; source order retained using adjacent known times", s.metadata.SessionID, s.checkpoint, missing))
+	}
+	if regressed > 0 {
+		warnings = append(warnings, fmt.Sprintf("session %s checkpoint %s: %d timestamp(s) regress; source order takes precedence over wall-clock order", s.metadata.SessionID, s.checkpoint, regressed))
+	}
+	return events, warnings, nil
 }

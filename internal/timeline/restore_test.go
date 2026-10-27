@@ -69,7 +69,7 @@ func TestRestoreCheckpointSessionMatrix(t *testing.T) {
 		{"cumulative", [][]fixtureSession{{{id: "x", data: prefix(x, 3)}}, {{id: "x", start: 3, data: x}}}, 1, 7},
 		{"continues before range", [][]fixtureSession{{{id: "x", start: 1, data: prefix(x, 3)}}}, 1, 2},
 		{"noncontiguous", [][]fixtureSession{{{id: "x", start: 1, data: prefix(x, 3)}}, {{id: "x", start: 5, data: x}}}, 1, 4},
-		{"overlapping", [][]fixtureSession{{{id: "x", data: prefix(x, 3)}}, {{id: "x", start: 1, data: x}}}, 1, 7},
+		{"overlapping", [][]fixtureSession{{{id: "x", data: prefix(x, 3)}}, {{id: "x", start: 1, data: x}}}, 1, 9},
 		{"no checkpoints", nil, 0, 0},
 	}
 	for _, tt := range tests {
@@ -90,8 +90,21 @@ func TestRestoreCheckpointSessionMatrix(t *testing.T) {
 					t.Fatal(lines)
 				}
 			}
-			if tt.name == "overlapping" && len(got.Events[1].Checkpoints) != 2 {
-				t.Fatal("missing overlap provenance")
+			for _, e := range got.Events {
+				if e.CheckpointID == "" || len(e.Checkpoints) != 1 || e.Checkpoints[0] != e.CheckpointID {
+					t.Fatal("checkpoint-local provenance lost")
+				}
+			}
+			if tt.name == "overlapping" {
+				copies := 0
+				for _, e := range got.Events {
+					if e.Line == 1 {
+						copies++
+					}
+				}
+				if copies != 2 {
+					t.Fatal("overlapping checkpoint records were deduplicated")
+				}
 			}
 		})
 	}
@@ -143,7 +156,6 @@ func TestInvalidRestorationFails(t *testing.T) {
 	}{
 		{"offset past end", "offset", [][]fixtureSession{{{id: "x", start: 99, data: x}}}},
 		{"negative offset", "offset", [][]fixtureSession{{{id: "x", start: -1, data: x}}}},
-		{"rewritten snapshot", "non-cumulative", [][]fixtureSession{{{id: "x", data: []byte(compactEvent("", "changed"))}}, {{id: "x", data: x}}}},
 		{"bad JSON", "invalid JSON", [][]fixtureSession{{{id: "x", data: []byte("{bad}")}}}},
 		{"unsupported agent", "unsupported agent", [][]fixtureSession{{{id: "x", agent: "Gemini CLI", data: x}}}},
 		{"duplicate session", "duplicate session", [][]fixtureSession{{{id: "x", data: x}, {id: "x", data: x}}}},
