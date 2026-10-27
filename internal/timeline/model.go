@@ -91,13 +91,14 @@ type Part struct {
 }
 
 type Event struct {
-	SessionID string     `json:"session_id"`
-	Agent     string     `json:"agent"`
-	Timestamp *time.Time `json:"timestamp"`
-	Type      string     `json:"type"`
-	Role      string     `json:"role"`
-	ID        string     `json:"event_id,omitempty"`
-	// Line is zero-based in full.jsonl, including blank lines.
+	CheckpointID string     `json:"checkpoint_id,omitempty"`
+	SessionID    string     `json:"session_id"`
+	Agent        string     `json:"agent"`
+	Timestamp    *time.Time `json:"timestamp"`
+	Type         string     `json:"type"`
+	Role         string     `json:"role"`
+	ID           string     `json:"event_id,omitempty"`
+	// Line is zero-based in this checkpoint's full.jsonl, including blank lines.
 	Line        int                     `json:"source_line"`
 	Checkpoints []string                `json:"checkpoints"`
 	Parts       []Part                  `json:"parts,omitempty"`

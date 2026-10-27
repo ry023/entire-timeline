@@ -122,7 +122,8 @@ func decodeRecords(data []byte, agent, session string) (map[string]Record, error
 			return nil, fmt.Errorf("summary record line %d: %w", i+1, err)
 		}
 		hash, hashErr := hex.DecodeString(row.TextSHA256)
-		if row.SchemaVersion != 1 || row.Agent != agent || agent == "" || row.SessionID != session || session == "" || row.SourceLine < 0 || hashErr != nil || len(hash) != 32 || strings.TrimSpace(row.Summary) == "" || strings.ContainsAny(row.Summary, "\r\n") {
+		validSchema := (row.SchemaVersion == 1 && row.CheckpointID == "") || (row.SchemaVersion == 2 && row.CheckpointID != "")
+		if !validSchema || row.Agent != agent || agent == "" || row.SessionID != session || session == "" || row.SourceLine < 0 || hashErr != nil || len(hash) != 32 || strings.TrimSpace(row.Summary) == "" || strings.ContainsAny(row.Summary, "\r\n") {
 			return nil, fmt.Errorf("invalid or unsupported summary record at line %d", i+1)
 		}
 		if _, ok := rows[row.Key()]; ok {
@@ -183,7 +184,7 @@ func Attach(t *timeline.Timeline, records map[string]Record) {
 	for i := range t.Events {
 		e := &t.Events[i]
 		e.Summary = ""
-		if r, ok := records[Key(e.Agent, e.SessionID, e.Line)]; ok && r.Matches(*e) {
+		if r, ok := lookupRecord(records, *e); ok {
 			e.Summary = r.Summary
 		}
 	}
@@ -194,7 +195,12 @@ func encodeRecords(rows map[string]Record) ([]byte, error) {
 	for _, row := range rows {
 		records = append(records, row)
 	}
-	sort.Slice(records, func(i, j int) bool { return records[i].SourceLine < records[j].SourceLine })
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].CheckpointID != records[j].CheckpointID {
+			return records[i].CheckpointID < records[j].CheckpointID
+		}
+		return records[i].SourceLine < records[j].SourceLine
+	})
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)

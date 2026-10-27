@@ -51,7 +51,11 @@ func event(session string, line int, text string) timeline.Event {
 	return timeline.Event{SessionID: session, Agent: "copilot-cli", Role: "user", Type: "user.message", Line: line, Parts: []timeline.Part{{Kind: "text", Text: text}}}
 }
 func record(e timeline.Event, text string) Record {
-	return Record{1, e.SessionID, e.Agent, e.Line, e.ID, TextHash(e.ConversationText()), text, Generation{"copilot-cli", "", PromptVersion}, time.Now().UTC()}
+	version := 1
+	if e.CheckpointID != "" {
+		version = 2
+	}
+	return Record{SchemaVersion: version, CheckpointID: e.CheckpointID, SessionID: e.SessionID, Agent: e.Agent, SourceLine: e.Line, EventID: e.ID, TextSHA256: TextHash(e.ConversationText()), Summary: text, Generation: Generation{"copilot-cli", "", PromptVersion}, CreatedAt: time.Now().UTC()}
 }
 
 type generatorFunc func(context.Context, string, string) ([]byte, error)
