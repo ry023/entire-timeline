@@ -1,5 +1,7 @@
 # MVP実装・検証記録
 
+この文書は初期MVPの調査と実装の記録です。2026-10-27に復元方式を変更し、現在は各Checkpointの担当区間を独立して切り出し、Checkpoint間の重複を残します。累積性の全体検証・最長履歴への統合・Session行番号による重複排除は通常の復元では行いません。現在の仕様は[README](../README.md#復元の仕組みと確認したentireの仕様)、要約のschema v2と旧形式の読み取りは[IMPLEMENTATION_2.md](IMPLEMENTATION_2.md#データとgit操作)を参照してください。
+
 ## 調査した公式ソース
 
 確認日：2026-10-21。Entire公式リポジトリの`main`を取得し、コミット`99d28955d5d24f589f5cd09d921a3356cae60e33`で以下を確認した。実装時にローカルのEntire CLI 0.9.0の`checkpoint explain --help`も照合した。

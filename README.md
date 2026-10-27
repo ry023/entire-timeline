@@ -2,6 +2,8 @@
 
 EntireがGitに保存した会話を、指定したコミット範囲から復元するGo製CLIです。全Sessionの発言を1本の時系列ログに統合し、User・Assistantの本文、Markdown、コードブロック、中間メッセージを全文表示します。
 
+各Checkpointの担当区間を独立して読み、取得元のCheckpoint IDを表示します。同じSessionでもCheckpoint間の行番号の一致を要求せず、重複した会話はCheckpointごとの記録として残します。
+
 Copilotの会話には発言ごとの要約を生成できます。要約は独立したGitブランチに保存し、EntireのCheckpoint同期先へ共有できます。
 
 ```sh
@@ -81,7 +83,7 @@ entire timeline main...HEAD --checkpoint-ref refs/heads/my-checkpoints
 
 表示位置は前後の既知Checkpointのイベントを目安にし、`previous_checkpoint_id`／`next_checkpoint_id`と`placement`に根拠を残します。会話上の正確な位置を保証するものではありません。前後にイベントがない場合はGitコミット時刻を目安にし、それでも置けなければ末尾に置きます。
 
-このツールは自動fetchしないため、`checkpoint_unavailable`はローカルの参照先で取得できないという意味です。リモートにも存在しないと確認した意味ではありません。取得できたCheckpointのJSON破損・不整合・生履歴の書き換え等は、引き続き終了コード1のエラーにします。
+このツールは自動fetchしないため、`checkpoint_unavailable`はローカルの参照先で取得できないという意味です。リモートにも存在しないと確認した意味ではありません。取得できたCheckpointの担当区間のJSON破損・開始位置の不整合等は、引き続き終了コード1のエラーにします。別Checkpointの履歴と違うこと自体では停止しません。
 
 ### 紐づきが未確定の会話を表示する
 
@@ -92,7 +94,7 @@ entire timeline main...HEAD --include-unattributed
 entire timeline main...HEAD --include-unattributed --format jsonl
 ```
 
-選択範囲内の同じSessionの有効Checkpoint A・Cの間に欠落IDがあり、`Aの生履歴末尾`から`Cの開始オフセット`までに未割当の行が残る場合、その行をCの累積履歴から補います。両端の累積履歴の接頭辞一致を検証し、既に復元した行は重複させません。片方の境界しか分からない場合や、両端の間に欠落IDがない通常の非連続区間では追加しません。全Session履歴への置き換えや、Agentのローカル履歴ディレクトリの探索は行いません。
+選択範囲内の同じSessionの有効Checkpoint A・Cの間に欠落IDがあり、`Aの生履歴末尾`から`Cの開始オフセット`までに未割当の行が残る場合、その行をCの累積履歴から補います。補助表示では両端の接頭辞一致を確認し、Cの担当区間より前の部分だけを追加します。接頭辞が違う場合は警告して補助部分をスキップし、各Checkpointの担当区間の復元は続けます。片方の境界しか分からない場合や、両端の間に欠落IDがない通常の非連続区間では追加しません。全Session履歴への置き換えや、Agentのローカル履歴ディレクトリの探索は行いません。
 
 補ったイベントには通常表示で`[UNATTRIBUTED CONTEXT]`を付け、JSONLには次の属性を追加します。
 
@@ -102,9 +104,9 @@ entire timeline main...HEAD --include-unattributed --format jsonl
 
 これはイベントの`attribution`フィールドです。元の`raw`・Session・物理行番号は保持し、`checkpoints`は空配列にします。近くの欠落IDがそのSessionに属するか、この会話が指定コミット範囲に属するかは確定できないためです。欠落Checkpointへの関連付けを推測して作りません。欠落マーカーは補助会話が読めた場合も残します。欠落レコード・補助会話は要約providerへ渡さず、`--include-unattributed`は表示コマンドだけのオプションです。
 
-## 復元エラーの診断
+## 復元時の診断
 
-`--verbose`で、復元時に比較したCheckpoint・Sessionと、不一致の構造をstderrへ出せます。`summarize`でも使えます。
+`--verbose`で、Checkpointごとの開始位置・行数・復元件数をstderrへ出せます。`summarize`でも使えます。
 
 ```sh
 # 正常終了した場合も会話本文を保存せず、診断用stderrだけを保存
@@ -113,12 +115,14 @@ entire timeline main...HEAD --verbose >/dev/null 2>timeline-debug.log
 entire timeline summarize main...HEAD --verbose
 ```
 
-`non-cumulative or rewritten transcript`の場合は、次の情報が手掛かりになります。
+通常の復元はCheckpointごとに行い、以前の`non-cumulative or rewritten transcript`による停止は行いません。接頭辞の比較ログは、`--include-unattributed`で補助表示の可否を調べる場合だけに使います。
 
 | ログ | 意味 |
 | --- | --- |
+| `restore_mode=per_checkpoint` | Checkpointごとに独立した座標で切り出す |
 | `snapshot` | Checkpointごとの生履歴の行数・開始オフセット・選択区間 |
-| `prefix_mismatch` | 不一致のCheckpoint、最初に違う行、比較範囲内の不一致行数 |
+| `restored_snapshot` | そのCheckpoint・Sessionから復元できた件数 |
+| `prefix_mismatch` | 補助表示に使う履歴間の不一致。補助部分だけをスキップする |
 | `raw_line=8 physical_line=9` | 0始まりのオフセット8、ファイル上では9行目 |
 | `inside_selected_range` | 最初の不一致行が、それぞれのCheckpointの選択区間内か |
 | `decoded_json_equal=true` | JSONとしてdecodeした結果は同じ。キー順・空白・文字列エスケープ等の表記差の可能性。数字の表記は区別 |
@@ -148,7 +152,7 @@ entire timeline main...HEAD --filter conversation --include-unattributed
 
 `conversation`は本文の投影なので、JSONLでもCoTやToolデータが再び混ざらないよう`raw`を省略します。元イベントを保持したエクスポートには`--filter all`を使ってください。`--include-tools`と`--filter conversation`は併用できません。フィルタは復元・検証後の表示に適用し、保存済み履歴や要約生成の対象を変更しません。
 
-各イベントに日時、短いSessionラベル、Role、Agentを表示します。冒頭にSessionラベルと元のSession IDの対応表が出ます。
+各イベントに日時、短いSessionラベル、Role、Agent、取得元のCheckpoint IDを表示します。冒頭にSessionラベルと元のSession IDの対応表が出ます。Checkpoint間の重複は残るため、同じ発言が複数回表示されることがあります。
 
 通常表示でもツールの名前・引数の概要とTool Resultの存在がわかります。長いツール引数だけを短縮し、発言本文は省略しません。`--include-tools`ではツール詳細と元イベントのJSONを併記します。未知のイベントやcontent blockはJSONとして表示し、黙って捨てません。
 
@@ -158,13 +162,14 @@ JSONLの通常行は1行につき1元イベントです。既定の`--filter all
 
 | フィールド | 内容 |
 | --- | --- |
+| `checkpoint_id` | そのイベントを切り出したCheckpoint。紐づき未確定の補助会話・欠落レコードでは省略 |
 | `session_id` | 元のSession ID |
 | `agent` | Agentの識別名（`copilot-cli` / `claude-code`） |
 | `timestamp` | 元の時刻。欠落時は`null` |
 | `type` / `role` | 元イベント種別と表示用Role |
 | `event_id` | 元のID / UUID。存在する場合のみ |
-| `source_line` | `full.jsonl`内の0始まりの物理行番号 |
-| `checkpoints` | その行を対象区間に含むCheckpoint IDの配列 |
+| `source_line` | 取得元Checkpointの`full.jsonl`内の0始まりの物理行番号。Session全体の共通座標ではない |
+| `checkpoints` | 互換用の配列。通常は取得元のCheckpoint ID 1件、補助会話では空配列 |
 | `parts` | 表示用のテキスト・ツール・未知ブロック |
 | `raw` | 元のイベント全体。未知フィールドも保持。`--filter conversation`では省略 |
 | `summary` | 本文と一致する保存済み要約。存在する場合のみ |
@@ -202,6 +207,8 @@ entire timeline summarize main...HEAD --force
 
 通常は有効な既存要約を再利用し、未要約・本文変更・プロンプト版変更のあった発言を生成します。provider/model設定の変更だけでは既存要約を無効にしません。必要なら`--force`を使ってください。生成対象外の範囲に保存済みの要約も保持します。要約生成後のpushは別操作です。
 
+発言の照合キーにはCheckpoint IDも含めます。同じSession・行番号でもCheckpointが違えば別レコードで、重複した会話もCheckpoint別の要約対象です。旧形式の要約は保持し、元イベントID・行番号・本文ハッシュ・プロンプト版が一致するものを再利用します。IDがない旧レコードなどは新たに生成します。
+
 入力は既定128 KiB、要約対象は1回128発言までを目安に分割し、収まる前後の最大2発言ずつを文脈として重ねます。実際のモデル上限を自動検出するものではありません。`--batch-bytes N`で入力予算を変更できます。単独で予算を超える発言は全文を渡し、黙って切り捨てません。モデルが受け付けない場合はエラーになります。
 
 不正・重複ID・欠落・途中切れを検証し、Copilotの異常終了やキャンセル時も、検証できた成功分をローカルに保存します。部分失敗は終了コード1です。同じコマンドを再実行すると不足分を生成します。生成中の進捗と結果件数はstderrへ出します。
@@ -224,7 +231,7 @@ timeline専用設定ファイルや、Entire設定への独自キーは追加し
 summaries/copilot-cli/<session-id>.jsonl
 ```
 
-1行が1発言のレコードです。Agent・Session・生履歴の物理行番号・本文SHA-256・要約・生成設定・生成日時を保持します。Session IDの危険な文字は可逆なpercent escapeとし、ハッシュ化やディレクトリ分散はしません。詳細は[第2段階の実装メモ](docs/IMPLEMENTATION_2.md)を参照してください。
+1行が1発言のレコードです。Agent・Session・Checkpoint・その生履歴の物理行番号・本文SHA-256・要約・生成設定・生成日時を保持します。新規レコードは`schema_version: 2`で、Checkpoint IDのない旧形式v1も読み取り・保持します。ブランチ名の`v1`は保存先レイアウトの版で、レコードのスキーマ版とは別です。Session IDの危険な文字は可逆なpercent escapeとし、ハッシュ化やディレクトリ分散はしません。詳細は[第2段階の実装メモ](docs/IMPLEMENTATION_2.md)を参照してください。
 
 ```sh
 # 保存済みデータをEntireと同じCheckpoint同期先へ共有
@@ -262,8 +269,8 @@ entire timeline hooks uninstall
 1. Gitに範囲を解釈させ、`Entire-Checkpoint`トレーラーを列挙します。保存済みの`linked_commits[].sha`と`commit_sha`も照合します。`commit_sha`はインポート時のアンカーで、コードへの寄与を証明する情報ではありません。
 2. `entire/checkpoints/v1`ブランチと`refs/entire/checkpoints/<末尾2文字>/<id>`を読みます。ローカルのv1ブランチがない場合は、取得済みのremote-tracking v1ブランチも探します。Sessionは配列内の位置ではなく`session_id`で識別します。
 3. 生履歴`full.jsonl`とSessionメタデータを取得します。`checkpoint_transcript_start`は0始まりの生履歴の行オフセットです。Entireと同じ規則で古い`transcript_lines_at_start`にフォールバックします。省略された整数値は0として扱います。
-4. 各Checkpointの担当区間は`[開始オフセット, そのCheckpointが保存した生履歴の行数)`です。選択したCheckpointの中で最長の累積履歴を使い、他の保存履歴がその接頭辞であることを検証します。担当区間の和集合だけを抽出するため、対象外Checkpointを挟んでも、その区間が混入しません。
-5. Sessionと物理行番号によって重複を除き、時刻・Session ID・行番号で決定的に統合します。
+4. 各Checkpointの担当区間`[開始オフセット, そのCheckpointが保存した生履歴の行数)`を、そのCheckpoint自身の`full.jsonl`から切り出します。別Checkpointの最長履歴への置き換えや、Checkpoint間の接頭辞一致の検証は通常の復元では行いません。
+5. 各Checkpoint・Session内で元の順序を保ち、時刻・Session ID・選択されたCheckpointの順序・物理行番号で決定的に統合します。Checkpoint間の重複排除は行いません。`--include-unattributed`を指定したときだけ、接頭辞一致を確認できる前後の履歴から補助部分を追加します。
 
 `transcript.jsonl`は圧縮後の履歴で、`compact_transcript_start`も圧縮後の行番号です。旧バージョンにはCheckpoint単位の差分だけを保存する形式もあります。このため、生履歴の代用には使いません。
 
@@ -273,9 +280,9 @@ entire timeline hooks uninstall
 
 - 最初の重点対象はCopilot CLIです。ネイティブの`user.message` / `assistant.message` / `tool.execution_*`形式と、提示されたEntire compact v1形式に対応しています。Claude CodeのJSONLにも対応します。他Agentはオフセットの意味を保証できないため、明示的にエラーにします。
 - ローカルにあるGitバックエンドのCheckpointを対象にします。未取得の履歴、APIのみの保存先、独自バックエンドは自動取得しません。必要なデータはあらかじめEntireの利用環境に従って取得してください。独自メタデータrefは`--checkpoint-ref`で追加できます。
-- 対象Checkpointの生履歴がない、行オフセットが範囲外、履歴が書き換わって接頭辞一致しない、同じCheckpointの保存先同士で内容が異なる、JSONが壊れている場合はエラーにします。全Session履歴への置き換えは行いません。
+- 対象Checkpointの生履歴がない、行オフセットが範囲外、同じCheckpointの保存先同士で内容が異なる、担当区間のJSONが壊れている場合はエラーにします。別Checkpointの行挿入・削除・書き換えは各Checkpoint内の開始位置で扱います。全Session履歴への置き換えは行いません。
 - 生履歴が`full.jsonl`と連番の`.001`、`.002`などに分割されている場合は再構成します。途中のチャンク欠落もエラーにします。古い`full.log`のみの保存形式は未対応です。
-- タイムスタンプ欠落時は同Sessionの直前の時刻、先頭なら次の既知時刻を整列の基準に使います。全時刻が不明のSessionは最後に置きます。時刻が逆行する場合はSession内の元の順序を優先します。どちらもstderrに警告し、JSONLの元の時刻を補完・変更しません。不正な日時文字列はエラーです。
+- タイムスタンプ欠落時は同じCheckpoint・Session内の直前の時刻、先頭なら次の既知時刻を整列の基準に使います。その区間の全時刻が不明なら最後に置きます。時刻が逆行する場合はCheckpoint・Session内の元の順序を優先します。どちらもstderrに警告し、JSONLの元の時刻を補完・変更しません。不正な日時文字列はエラーです。
 - チャンクやイベントを含む選択済みの累積履歴をメモリに読みます。巨大な履歴ではその量に応じたメモリが必要です。
 - Session配列にある会話を対象とします。`tasks/`に別ファイルとして保存されるサブエージェント専用履歴の追加復元は対象外です。親履歴内に記録されたサブエージェント関連イベントは保持します。
 - 正確さはEntireに保存された履歴と境界情報に依存します。保存前に失われたイベントや、Entireが秘匿化した値は復元できません。

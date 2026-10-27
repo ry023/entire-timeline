@@ -2,6 +2,8 @@
 
 実装日：2026-10-23。[PLAN_2.md](PLAN_2.md)の要約生成・Git保存・同期・hook管理を実装しました。元の[PLAN.md](PLAN.md)は変更していません。
 
+2026-10-27追記：復元をCheckpoint単位の独立した切り出しへ変更しました。要約レコードもCheckpoint IDを含むschema v2へ拡張し、schema v1の読み取りと保持を継続します。
+
 ## コマンドと対象
 
 ```sh
@@ -31,7 +33,7 @@ entire timeline hooks uninstall
 | provider未設定 | エラー。Entire側の`entire configure --summarize-provider copilot-cli`を案内 |
 | model未設定 | Copilotに任せる。取得できない実効model名を捏造しない |
 | タイムアウト | `summary_timeout_seconds`の正の値を1回のCLI呼び出しに適用。未設定・0以下は無制限 |
-| 再利用 | Agent・Session・物理行・本文SHA-256・プロンプト版が一致するものを再利用。provider/modelの変更時は必要に応じ`--force` |
+| 再利用 | Agent・Session・Checkpoint・その物理行・イベントID・本文SHA-256・プロンプト版が一致するものを再利用。provider/modelの変更時は必要に応じ`--force` |
 | 応答検証 | JSONLの要求IDと要約を検証。未知ID・重複ID・空要約・改行入り要約・不正JSONを除外 |
 | 部分失敗 | 各呼び出しで検証済みの行を集め、処理終了時に成功分を保存。失敗は終了コード1、再実行は不足分を生成 |
 | キャンセル | Copilotを停止し、取得済みの成功分を別の30秒保存用contextでcommit。プロセスの強制終了には対応しない |
@@ -45,10 +47,14 @@ entire timeline hooks uninstall
 固定refは`refs/heads/entire-timeline/metadata/v1`、保存パスは`summaries/<agent>/<session-id>.jsonl`です。危険なIDのUTF-8バイトをpercent escapeします（`%`・`.`・パス区切りも含む）。UUIDの英数字とハイフン等は読みやすいまま残ります。
 
 ```json
-{"schema_version":1,"session_id":"session-xxx","agent":"copilot-cli","source_line":42,"event_id":"event-xxx","text_sha256":"本文のSHA-256の64桁hex","summary":"認証機能の実装を依頼。","generation":{"provider":"copilot-cli","model":"指定した場合のみ","prompt_version":1},"created_at":"2026-10-23T00:00:00Z"}
+{"schema_version":2,"checkpoint_id":"checkpoint-xxx","session_id":"session-xxx","agent":"copilot-cli","source_line":42,"event_id":"event-xxx","text_sha256":"本文のSHA-256の64桁hex","summary":"認証機能の実装を依頼。","generation":{"provider":"copilot-cli","model":"指定した場合のみ","prompt_version":1},"created_at":"2026-10-27T00:00:00Z"}
 ```
 
-`source_line`は生Transcriptの0始まりの物理行です。元IDがなければ`event_id`を省略します。複数text blockは元順序で`\n\n`連結し、その本文のUTF-8バイト列をハッシュ化します。Tool／CoTの変更だけでは本文ハッシュは変わりません。
+`source_line`はそのCheckpointの生Transcriptの0始まりの物理行です。元IDがなければ`event_id`を省略します。複数text blockは元順序で`\n\n`連結し、その本文のUTF-8バイト列をハッシュ化します。Tool／CoTの変更だけでは本文ハッシュは変わりません。
+
+照合キーは`agent + session_id + checkpoint_id + source_line`です。異なるCheckpointで同じ行番号を使っても別レコードとして保存し、重複した会話もそれぞれ生成します。生成入力にもCheckpoint IDを含めます。ファイルは従来どおりSession別で、旧schema v1と新schema v2を同じJSONLに保持できます。
+
+旧schema v1のレコードは削除・自動変換せず保持します。新しいイベントへの再利用は、元イベントIDが存在し、Agent・Session・行番号・本文ハッシュ・プロンプト版が一致する場合に限ります。新しいCheckpoint専用レコードが存在する場合はそちらを優先します。IDなし等の照合できない旧要約は残したまま、新形式で生成します。schema v2を含む要約ファイルを読むには、対応版のtimelineが必要です。
 
 保存時はセッションの既存行を読み、生成できた行だけを更新します。範囲外・今回失敗した発言の既存行も保持します。不正な既存ファイルはエラーにし、上書きして消しません。
 
@@ -99,6 +105,8 @@ git diff --check
 | `internal/cli/summarize_test.go` | Fake Copilot実行、argv/cwd/環境・入力の検証、保存・表示・再利用・再生成・部分失敗・キャンセル |
 | `internal/cli/remote_test.go` | 実バイナリのhook登録→実際のGit push→bare remoteへの要約同期→解除→初回取得 |
 | `internal/cli/run_test.go` | 既存CLI、Entire外部コマンドとの一致 |
+| `internal/timeline/checkpoint_restore_test.go` / `internal/cli/verbose_test.go` | 行挿入・短縮・書き換えのあるCheckpointの独立抽出、Checkpoint別の出典と重複保持、補助表示のスキップ、要約保存までの結合 |
+| `internal/summary/checkpoint_test.go` | Checkpointを含む照合キー、同一行番号の共存、旧schemaとの混在・安全な再利用、同時保存・リモート同期 |
 | `internal/timeline/gaps_test.go` / `internal/cli/gaps_test.go` | Checkpoint欠落時の継続・専用エラーレコード・任意の未割当会話表示・要約入力からの除外 |
 
 モデルによる実際の生成や外部サービスへのpushはテストでは行いません。生成はFake Copilot、同期は一時bareリポジトリで検証します。Entire CLIがなければ外部コマンドの追加smoke testだけskipします。本家ソースの参照先は[PLAN_2末尾](PLAN_2.md#12-本家調査の参照先)に記載しています。
