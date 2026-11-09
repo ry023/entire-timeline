@@ -1,0 +1,310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:entire-timeline:jsonl:v1",
+  "title": "Entire Timeline JSONL v1 record",
+  "description": "Validates one JSONL line. The document order is the display order.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/event"
+    },
+    {
+      "$ref": "#/$defs/gap"
+    }
+  ],
+  "$defs": {
+    "event": {
+      "type": "object",
+      "properties": {
+        "checkpoint_id": {
+          "type": "string",
+          "description": "Assigned source checkpoint; omitted for unattributed context."
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "Original conversation time, or null when unknown; never the inferred sort time.",
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "source_line": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Zero-based physical line in the source checkpoint's full.jsonl."
+        },
+        "checkpoints": {
+          "type": "array",
+          "description": "One assigned checkpoint ID, or an empty array for unattributed context.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/part"
+          }
+        },
+        "raw": {
+          "description": "Original source event as any JSON value; omitted by the conversation filter."
+        },
+        "summary": {
+          "type": "string"
+        },
+        "attribution": {
+          "$ref": "#/$defs/attribution"
+        }
+      },
+      "required": [
+        "session_id",
+        "agent",
+        "timestamp",
+        "type",
+        "role",
+        "source_line",
+        "checkpoints"
+      ],
+      "additionalProperties": true,
+      "not": {
+        "required": [
+          "error"
+        ]
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "attribution"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "checkpoint_id"
+              ]
+            },
+            "properties": {
+              "checkpoints": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "required": [
+              "checkpoint_id"
+            ],
+            "properties": {
+              "checkpoints": {
+                "minItems": 1,
+                "maxItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "gap": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "timeline.error"
+        },
+        "role": {
+          "const": "system"
+        },
+        "error": {
+          "$ref": "#/$defs/missingCheckpoint"
+        }
+      },
+      "required": [
+        "type",
+        "role",
+        "error"
+      ],
+      "additionalProperties": true,
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "checkpoint_id"
+            ]
+          },
+          {
+            "required": [
+              "session_id"
+            ]
+          },
+          {
+            "required": [
+              "agent"
+            ]
+          },
+          {
+            "required": [
+              "timestamp"
+            ]
+          },
+          {
+            "required": [
+              "event_id"
+            ]
+          },
+          {
+            "required": [
+              "source_line"
+            ]
+          },
+          {
+            "required": [
+              "checkpoints"
+            ]
+          },
+          {
+            "required": [
+              "parts"
+            ]
+          },
+          {
+            "required": [
+              "raw"
+            ]
+          },
+          {
+            "required": [
+              "summary"
+            ]
+          },
+          {
+            "required": [
+              "attribution"
+            ]
+          }
+        ]
+      }
+    },
+    "part": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "data": true
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": true
+    },
+    "attribution": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "const": "unattributed"
+        },
+        "source_checkpoint_id": {
+          "type": "string"
+        },
+        "previous_checkpoint_id": {
+          "type": "string"
+        },
+        "next_checkpoint_id": {
+          "type": "string"
+        },
+        "nearby_missing_checkpoint_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "source_checkpoint_id",
+        "previous_checkpoint_id",
+        "next_checkpoint_id",
+        "nearby_missing_checkpoint_ids"
+      ],
+      "additionalProperties": true
+    },
+    "commit": {
+      "type": "object",
+      "properties": {
+        "sha": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "sha",
+        "timestamp"
+      ],
+      "additionalProperties": true
+    },
+    "missingCheckpoint": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "commits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/commit"
+          }
+        },
+        "previous_checkpoint_id": {
+          "type": "string"
+        },
+        "next_checkpoint_id": {
+          "type": "string"
+        },
+        "placement": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "checkpoint_id",
+        "message",
+        "commits",
+        "placement"
+      ],
+      "additionalProperties": true
+    }
+  }
+}

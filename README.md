@@ -13,7 +13,7 @@ entire timeline main...HEAD
 
 ## インストール
 
-Go 1.23以降とGitが必要です。外部Goモジュールへの依存はありません。
+Go 1.23以降とGitが必要です。CLI本体は外部Goモジュールに依存しません。テストではJSON Schema検証用の外部Goモジュールを使用します。
 
 ```sh
 go install github.com/ry023/entire-timeline/cmd/entire-timeline@latest
@@ -159,6 +159,8 @@ entire timeline main...HEAD --filter conversation --include-unattributed
 本文は端末のソフトラップに任せ、改行・インデント・コードブロックを保持します。区切り線とツール概要の幅は`--width`、`COLUMNS`、80の優先順で決めます（区切り線は最大100桁）。ANSIカラーや自動ページャーは使いません。
 
 JSONLの通常行は1行につき1元イベントです。既定の`--filter all`ではツール・システムイベントも含み、`--include-tools`によって復元結果は変わりません。欠落時は上記の`timeline.error`レコードも含まれます。
+
+外部ツール向けの公開仕様は[Timeline JSONL v1](docs/JSONL_FORMAT.md)、各行を検証する[JSON Schema](schemas/timeline.v1.schema.json)、[出力サンプル](docs/examples/timeline.v1.jsonl)を参照してください。
 
 | フィールド | 内容 |
 | --- | --- |
